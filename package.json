@@ -1,31 +1,27 @@
 {
-  "name": "actualitzador-wp-dashboard",
-  "version": "0.3.0",
+  "name": "actualizadorwp-v3",
+  "version": "3.2.0",
   "private": true,
+  "type": "module",
   "scripts": {
     "dev": "next dev",
-    "build": "next build --no-lint --no-type-check",
-    "start": "next start",
-    "postinstall": "npm run ensure-types",
-    "ensure-types": "npm ls @types/react >/dev/null 2>&1 || npm i -D @types/react@18.2.66 @types/react-dom@18.2.22 @types/node@20.12.12"
+    "build": "NEXT_DISABLE_ESLINT=1 NEXT_DISABLE_TYPECHECK=1 next build",
+    "start": "next start"
   },
   "dependencies": {
-    "@sparticuz/chromium": "123.0.1",
-    "dayjs": "^1.11.18",
-    "next": "14.2.5",
-    "nodemailer": "^6.9.14",
-    "puppeteer-core": "22.13.1",
+    "@sparticuz/chromium": "^123.0.2",
+    "dayjs": "^1.11.13",
+    "next": "14.2.3",
+    "nodemailer": "^6.9.12",
+    "puppeteer-core": "^22.15.0",
     "react": "18.3.1",
-    "react-dom": "18.3.1",
-    "zod": "3.23.8"
+    "react-dom": "18.3.1"
   },
   "devDependencies": {
-    "@types/node": "^20.12.12",
-    "@types/react": "^18.2.66",
-    "@types/react-dom": "^18.2.22",
-    "typescript": "5.5.4",
-    "@types/nodemailer": "^6.4.13"
-
+    "@types/node": "^20.14.10",
+    "@types/react": "^18.3.5",
+    "@types/react-dom": "^18.3.0",
+    "typescript": "^5.5.4"
   },
   "engines": {
     "node": "20.x"
