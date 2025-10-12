@@ -1,0 +1,29 @@
+{
+  "name": "actualitzador-wp-dashboard",
+  "version": "0.3.0",
+  "private": true,
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start",
+    "postinstall": "npm run ensure-types",
+    "ensure-types": "npm ls @types/react >/dev/null 2>&1 || npm i -D @types/react@18.2.66 @types/react-dom@18.2.22 @types/node@20.12.12"
+  },
+  "dependencies": {
+    "next": "14.2.5",
+    "react": "18.3.1",
+    "react-dom": "18.3.1",
+    "zod": "3.23.8",
+    "puppeteer-core": "22.13.1",
+    "@sparticuz/chromium": "123.0.1"
+  },
+  "devDependencies": {
+    "typescript": "5.5.4",
+    "@types/node": "20.12.12",
+    "@types/react": "18.2.66",
+    "@types/react-dom": "18.2.22"
+  },
+  "engines": {
+    "node": "20.x"
+  }
+}
