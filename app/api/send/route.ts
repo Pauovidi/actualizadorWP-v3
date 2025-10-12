@@ -1,101 +1,128 @@
-import { NextResponse } from "next/server";
+import { NextResponse } from 'next/server';
 
-export const runtime = "nodejs";
-
-type Att = { filename: string; contentB64: string; contentType?: string };
+type SendBody = {
+  site: { name: string; url: string; email?: string | null };
+  reportHtml: string | null;       // data URL o null
+  reportFileName: string;          // para el informe
+  invoice?: { fileName: string; base64: string } | null;
+  subject: string;
+};
 
 export async function POST(req: Request) {
-  const body = await req.json().catch(() => ({}));
-  const {
-    to,
-    subject = "Informe Actualitzador WP",
-    html = "<p>Adjunto informe.</p>",
-    attachments = [] as Att[],
-  } = body;
+  try {
+    const body = (await req.json()) as SendBody;
 
-  const from = process.env.EMAIL_FROM!;
-  const toFinal = to || process.env.EMAIL_TO_DEFAULT;
-  if (!from || !toFinal) {
-    return NextResponse.json(
-      { error: "EMAIL_FROM / EMAIL_TO_DEFAULT no configurados" },
-      { status: 500 }
-    );
-  }
+    const to =
+      (body.site.email && body.site.email.trim()) ||
+      process.env.EMAIL_TO_DEFAULT;
 
-  // --- SMTP primero (si hay variables) ---
-  if (process.env.SMTP_HOST) {
+    if (!to) {
+      return NextResponse.json(
+        { ok: false, error: 'Email destino vacío (ni por sitio ni global)' },
+        { status: 400 }
+      );
+    }
+
+    const from = process.env.EMAIL_FROM || 'Devestial <noreply@devestial.com>';
+
+    // Construimos adjuntos
+    const attachments: any[] = [];
+    if (body.reportHtml) {
+      // data:text/html;base64,xxxx
+      const base64 = body.reportHtml.split(',')[1] || '';
+      attachments.push({
+        filename: body.reportFileName || 'informe.html',
+        content: Buffer.from(base64, 'base64'),
+        contentType: 'text/html; charset=utf-8',
+      });
+    }
+    if (body.invoice?.base64) {
+      attachments.push({
+        filename: body.invoice.fileName || 'factura.pdf',
+        content: Buffer.from(body.invoice.base64, 'base64'),
+        contentType: 'application/pdf',
+      });
+    }
+
+    const htmlBody = `
+      <div style="font-family:Inter,system-ui,-apple-system,sans-serif">
+        <p>Hola,</p>
+        <p>Adjuntamos el <strong>informe de actualización</strong> y la <strong>factura</strong> del sitio <b>${body.site.name}</b>.</p>
+        <ul>
+          <li><b>Sitio:</b> ${body.site.name}</li>
+          <li><b>URL:</b> ${body.site.url}</li>
+        </ul>
+        <p>Gracias,<br/>Devestial</p>
+      </div>
+    `;
+
+    // 1) Intento con SMTP
     try {
-      const port = Number(process.env.SMTP_PORT || 587);
-      const secure =
-        (process.env.SMTP_SECURE || "").trim() === "1" || port === 465;
-
-      // Import dinámico para evitar error de tipos si faltan @types/nodemailer
-      // @ts-ignore
-      const nodemailer = (await import("nodemailer")).default as any;
+      const { default: nodemailer } = await import('nodemailer');
 
       const transporter = nodemailer.createTransport({
         host: process.env.SMTP_HOST,
-        port,
-        secure, // true = TLS (465); false = STARTTLS (587)
-        auth: process.env.SMTP_USER
-          ? { user: process.env.SMTP_USER, pass: process.env.SMTP_PASS }
-          : undefined,
-        connectionTimeout: 15_000,
-        socketTimeout: 25_000,
+        port: Number(process.env.SMTP_PORT || 587),
+        secure: process.env.SMTP_SECURE === '1',
+        auth: {
+          user: process.env.SMTP_USER,
+          pass: process.env.SMTP_PASS,
+        },
       });
 
-      const info = await transporter.sendMail({
+      await transporter.verify(); // validación temprana
+
+      await transporter.sendMail({
         from,
-        to: toFinal,
-        subject,
-        html,
-        attachments: (attachments as Att[]).map((a) => ({
-          filename: a.filename,
-          content: Buffer.from(a.contentB64, "base64"),
-          contentType: a.contentType || "application/octet-stream",
-        })),
+        to,
+        subject: body.subject,
+        html: htmlBody,
+        attachments,
       });
 
-      return NextResponse.json({ ok: true, id: info.messageId, via: "smtp" });
-    } catch (e: any) {
-      // Si SMTP falla y hay RESEND_API_KEY, continuamos al fallback.
-      if (!process.env.RESEND_API_KEY) {
+      return NextResponse.json({ ok: true, via: 'smtp' });
+    } catch (smtpErr: any) {
+      // 2) Fallback Resend si hay API key
+      const apiKey = process.env.RESEND_API_KEY;
+      if (!apiKey) {
         return NextResponse.json(
-          { error: String(e) || "SMTP error" },
+          { ok: false, error: `SMTP error: ${smtpErr?.message || smtpErr}` },
           { status: 500 }
         );
       }
+
+      const resp = await fetch('https://api.resend.com/emails', {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${apiKey}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          from,
+          to,
+          subject: body.subject,
+          html: htmlBody,
+          attachments: attachments.map((a) => ({
+            filename: a.filename,
+            content: a.content.toString('base64'),
+          })),
+        }),
+      });
+
+      if (!resp.ok) {
+        const t = await resp.text();
+        return NextResponse.json(
+          { ok: false, error: `Resend error: ${t}` },
+          { status: 500 }
+        );
+      }
+
+      return NextResponse.json({ ok: true, via: 'resend' });
     }
+  } catch (err: any) {
+    return NextResponse.json(
+      { ok: false, error: err?.message || String(err) },
+      { status: 500 }
+    );
   }
-
-  // --- Fallback: Resend por API HTTP (si está configurado) ---
-  if (process.env.RESEND_API_KEY) {
-    const res = await fetch("https://api.resend.com/emails", {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${process.env.RESEND_API_KEY}`,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        from,
-        to: toFinal,
-        subject,
-        html,
-        attachments: (attachments as Att[]).map((a) => ({
-          filename: a.filename,
-          content: a.contentB64, // base64
-          contentType: a.contentType || "application/octet-stream",
-        })),
-      }),
-    });
-
-    const json = await res.json();
-    if (!res.ok) return NextResponse.json({ error: json }, { status: res.status });
-    return NextResponse.json({ ok: true, id: json.id, via: "resend" });
-  }
-
-  return NextResponse.json(
-    { error: "Ni SMTP ni RESEND configurados" },
-    { status: 500 }
-  );
 }
