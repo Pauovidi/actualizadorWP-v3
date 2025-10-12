@@ -34,6 +34,26 @@ function stamp(d: Date){
   return `${pad2(d.getDate())}/${pad2(d.getMonth()+1)}/${d.getFullYear()} ${pad2(d.getHours())}:${pad2(d.getMinutes())}:${pad2(d.getSeconds())}`;
 }
 
+// Quita path/query/fragment, asegura base y sin barra final
+function normalizeBase(urlStr: string): string {
+  try {
+    const u = new URL(urlStr);
+    u.pathname = ""; u.search = ""; u.hash = "";
+    return u.toString().replace(/\/$/, "");
+  } catch { return urlStr; }
+}
+
+// Alterna www. en el hostname
+function toggleWww(urlStr: string): string {
+  try {
+    const u = new URL(urlStr);
+    u.hostname = u.hostname.startsWith("www.")
+      ? u.hostname.slice(4)
+      : `www.${u.hostname}`;
+    return u.toString().replace(/\/$/, "");
+  } catch { return urlStr; }
+}
+
 export async function POST(req: Request){
   const DEMO = process.env.DEMO_MODE === "1";
   const SCREENSHOT = process.env.SCREENSHOT_ENABLED !== "0";
@@ -59,22 +79,37 @@ export async function POST(req: Request){
             { kind:"theme", name:"twentytwentyfour", from:"1.0", to:"1.1", status:"ok" }
           ],
           errors: [],
-          notes: "DEMO"
+          notes: "DEMO",
+          usedBase: normalizeBase(site.url),
         };
       } else {
-        const endpoint = `${site.url}/wp-json/maint-agent/v1/update`;
-        const resp = await fetch(endpoint, {
-          method: "POST",
-          headers: { "Accept":"application/json", "X-MAINT-TOKEN": site.token, "User-Agent":"actualitzador-wp-dashboard" }
-        });
-        const text = await resp.text();
-        const json = JSON.parse(text);
-        data = {
-          status: resp.ok && (!json.errors || json.errors.length===0) ? "ok" : "error",
-          updated: json.updated || json.items || [],
-          errors: json.errors || (resp.ok ? [] : [ `HTTP ${resp.status}` ]),
-          notes: json.notes || ""
+        // Llamada real con fallback www/no-www
+        const tryCall = async (base: string) => {
+          const endpoint = `${normalizeBase(base)}/wp-json/maint-agent/v1/update`;
+          const resp = await fetch(endpoint, {
+            method: "POST",
+            headers: {
+              "Accept":"application/json",
+              "X-MAINT-TOKEN": site.token,
+              "User-Agent":"actualitzador-wp-dashboard"
+            }
+          });
+          const text = await resp.text();
+          const json = JSON.parse(text);
+          return {
+            usedBase: normalizeBase(base),
+            status: resp.ok && (!json.errors || json.errors.length===0) ? "ok" : "error",
+            updated: json.updated || json.items || [],
+            errors: json.errors || (resp.ok ? [] : [ `HTTP ${resp.status}` ]),
+            notes: json.notes || ""
+          };
         };
+
+        try {
+          data = await tryCall(site.url);
+        } catch {
+          data = await tryCall(toggleWww(site.url));
+        }
       }
 
       const response: UpdateResponse = {
@@ -88,11 +123,13 @@ export async function POST(req: Request){
       const rows = rowsFromUpdated(response.updated);
       const errHtml = errorsBox(response.errors);
 
-      let preview = site.screenshotUrl;
+      // Captura usando la base que funcionó (o la original)
+      let preview = (site as any).screenshotUrl as string | undefined;
       if (!preview && SCREENSHOT){
         try {
           const { screenshotToDataUri } = await import("@/lib/screenshot");
-          preview = await screenshotToDataUri(site.url);
+          const baseForPreview = (data?.usedBase as string) || site.url;
+          preview = await screenshotToDataUri(baseForPreview);
         } catch {}
       }
 
