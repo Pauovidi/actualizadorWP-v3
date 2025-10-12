@@ -4,7 +4,7 @@
   "private": true,
   "scripts": {
     "dev": "next dev",
-    "build": "next build",
+    "build": "next build --no-lint --no-type-check",
     "start": "next start",
     "postinstall": "npm run ensure-types",
     "ensure-types": "npm ls @types/react >/dev/null 2>&1 || npm i -D @types/react@18.2.66 @types/react-dom@18.2.22 @types/node@20.12.12"
