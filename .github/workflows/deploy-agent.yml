@@ -1,8 +1,9 @@
 name: Devestial Deploy Agent
 on: [push, workflow_dispatch]
+
 jobs:
   call:
-    uses: Pauovidi/deploy-agent./.github/workflows/main.yml@v1.0.1
+    uses: Pauovidi/deploy-agent./.github/workflows/main.yml@main   # o @v1.0.2 si lo etiquetas
     permissions:
       contents: write
       pull-requests: write
@@ -10,4 +11,3 @@ jobs:
     with:
       node_version: '20.x'
       max_attempts: '5'
-      runs_on: 'self-hosted'   # <- este label lo tiene tu runner
