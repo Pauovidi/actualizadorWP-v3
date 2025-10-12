@@ -1,6 +1,8 @@
 {
+  "buildCommand": "npm install dayjs && next build",
   "functions": {
-    "app/api/update/route.ts": {
+    "api/**": {
+      "runtime": "nodejs20.x",
       "memory": 1024,
       "maxDuration": 60
     }
