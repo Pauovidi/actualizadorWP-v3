@@ -1,5 +1,5 @@
+// app/api/send/route.ts
 import { NextResponse } from "next/server";
-import nodemailer from "nodemailer";
 
 export const runtime = "nodejs";
 
@@ -17,42 +17,59 @@ export async function POST(req: Request) {
   const from = process.env.EMAIL_FROM!;
   const toFinal = to || process.env.EMAIL_TO_DEFAULT;
   if (!from || !toFinal) {
-    return NextResponse.json({ error: "EMAIL_FROM / EMAIL_TO_DEFAULT no configurados" }, { status: 500 });
+    return NextResponse.json(
+      { error: "EMAIL_FROM / EMAIL_TO_DEFAULT no configurados" },
+      { status: 500 }
+    );
   }
 
-  // --- SMTP primero, si está configurado ---
+  // --- SMTP primero (si hay variables) ---
   if (process.env.SMTP_HOST) {
-    const port = Number(process.env.SMTP_PORT || 587);
-    const secure = (process.env.SMTP_SECURE || "").trim() === "1" || port === 465;
+    try {
+      const port = Number(process.env.SMTP_PORT || 587);
+      const secure =
+        (process.env.SMTP_SECURE || "").trim() === "1" || port === 465;
 
-    const transporter = nodemailer.createTransport({
-      host: process.env.SMTP_HOST,
-      port,
-      secure, // true = TLS directo (465); false = STARTTLS (587)
-      auth: process.env.SMTP_USER ? {
-        user: process.env.SMTP_USER,
-        pass: process.env.SMTP_PASS,
-      } : undefined,
-      connectionTimeout: 15_000,
-      socketTimeout: 25_000,
-    });
+      // Import dinámico para evitar error de tipos si faltan @types/nodemailer
+      // @ts-ignore
+      const nodemailer = (await import("nodemailer")).default as any;
 
-    const info = await transporter.sendMail({
-      from,
-      to: toFinal,
-      subject,
-      html,
-      attachments: (attachments as Att[]).map(a => ({
-        filename: a.filename,
-        content: Buffer.from(a.contentB64, "base64"),
-        contentType: a.contentType || "application/octet-stream",
-      })),
-    });
+      const transporter = nodemailer.createTransport({
+        host: process.env.SMTP_HOST,
+        port,
+        secure, // true = TLS (465); false = STARTTLS (587)
+        auth: process.env.SMTP_USER
+          ? { user: process.env.SMTP_USER, pass: process.env.SMTP_PASS }
+          : undefined,
+        connectionTimeout: 15_000,
+        socketTimeout: 25_000,
+      });
 
-    return NextResponse.json({ ok: true, id: info.messageId, via: "smtp" });
+      const info = await transporter.sendMail({
+        from,
+        to: toFinal,
+        subject,
+        html,
+        attachments: (attachments as Att[]).map((a) => ({
+          filename: a.filename,
+          content: Buffer.from(a.contentB64, "base64"),
+          contentType: a.contentType || "application/octet-stream",
+        })),
+      });
+
+      return NextResponse.json({ ok: true, id: info.messageId, via: "smtp" });
+    } catch (e: any) {
+      // Si SMTP falla y hay RESEND_API_KEY, continuamos al fallback.
+      if (!process.env.RESEND_API_KEY) {
+        return NextResponse.json(
+          { error: String(e) || "SMTP error" },
+          { status: 500 }
+        );
+      }
+    }
   }
 
-  // --- Fallback: Resend por API HTTP ---
+  // --- Fallback: Resend por API HTTP (si está configurado) ---
   if (process.env.RESEND_API_KEY) {
     const res = await fetch("https://api.resend.com/emails", {
       method: "POST",
@@ -65,9 +82,9 @@ export async function POST(req: Request) {
         to: toFinal,
         subject,
         html,
-        attachments: (attachments as Att[]).map(a => ({
+        attachments: (attachments as Att[]).map((a) => ({
           filename: a.filename,
-          content: a.contentB64,
+          content: a.contentB64, // base64
           contentType: a.contentType || "application/octet-stream",
         })),
       }),
@@ -78,5 +95,8 @@ export async function POST(req: Request) {
     return NextResponse.json({ ok: true, id: json.id, via: "resend" });
   }
 
-  return NextResponse.json({ error: "Ni SMTP ni RESEND configurados" }, { status: 500 });
+  return NextResponse.json(
+    { error: "Ni SMTP ni RESEND configurados" },
+    { status: 500 }
+  );
 }
