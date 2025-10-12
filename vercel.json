@@ -1,10 +1,10 @@
 {
-  "buildCommand": "npm install dayjs && next build",
   "functions": {
     "api/**": {
       "runtime": "nodejs20.x",
       "memory": 1024,
       "maxDuration": 60
     }
-  }
+  },
+  "buildCommand": "npm install && next build"
 }
