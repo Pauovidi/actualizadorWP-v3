@@ -1,0 +1,13 @@
+name: Devestial Deploy Agent
+on: [push, workflow_dispatch]
+
+jobs:
+  call:
+    uses: devestial/deploy-agent/.github/workflows/main.yml@v1
+    permissions:
+      contents: write
+      pull-requests: write
+    secrets: inherit
+    with:
+      node_version: '20.x'
+      max_attempts: '5'
