@@ -1,5 +1,5 @@
 {
-  "name": "actualitzador-wp",
+  "name": "actualizadorwp-v3",
   "version": "3.2.0",
   "private": true,
   "type": "module",
@@ -12,12 +12,11 @@
   "dependencies": {
     "@sparticuz/chromium": "^123.0.2",
     "dayjs": "^1.11.13",
+    "next": "14.2.3",
     "nodemailer": "^6.9.12",
     "puppeteer-core": "^22.15.0",
     "react": "18.3.1",
-    "react-dom": "18.3.1",
-    "next": "14.2.3",
-    "dayjs": "^1.11.13"
+    "react-dom": "18.3.1"
   },
   "devDependencies": {
     "@types/node": "^20.14.10",
