@@ -5,7 +5,31 @@ import type { SiteInput, ApiUpdateResponse } from "@/lib/types";
 const LS_KEY = "awp.sites.v1";
 const DEMO = process.env.NEXT_PUBLIC_DEMO === "1";
 
-function utf8ToB64(str: string){ return btoa(unescape(encodeURIComponent(str))); }
+// Base64 seguro para UTF-8 (sin unescape)
+function utf8ToB64(str: string){
+  const bytes = new TextEncoder().encode(str);
+  let bin = "";
+  for (let i=0; i<bytes.length; i++) bin += String.fromCharCode(bytes[i]);
+  return btoa(bin);
+}
+
+// Normaliza lo que escriba el usuario: "dominio.com" → "https://dominio.com"
+// Respeta si pone "www.dominio.com"
+function normalizeUrlLoose(v: string): string {
+  let s = (v || "").trim();
+  if (!s) return "";
+  s = s
+    .replace(/^https?:\/\//i, "")
+    .replace(/^\/\//, "")
+    .split("/")[0]        // solo host
+    .replace(/:\d+$/, ""); // sin puerto
+  return `https://${s.toLowerCase()}`;
+}
+
+function formatDateDDMMYYYY(d: Date){
+  const p = (n:number)=> (n<10?`0${n}`:`${n}`);
+  return `${p(d.getDate())}/${p(d.getMonth()+1)}/${d.getFullYear()}`;
+}
 
 export default function Dashboard(){
   const [sites, setSites] = useState<SiteInput[]>([]);
@@ -21,6 +45,7 @@ export default function Dashboard(){
 
   useEffect(() => {
     try{
+      // Guardamos sin los binarios de factura (ligero)
       const light = sites.map(({ invoiceB64, invoiceType, invoiceName, ...rest }) => rest as SiteInput);
       localStorage.setItem(LS_KEY, JSON.stringify(light));
     }catch{}
@@ -90,6 +115,31 @@ export default function Dashboard(){
       alert(`Falta factura para ${site.name || "sitio " + (i+1)}. No se envía.`);
       return { ok:false, error:"Falta factura" };
     }
+
+    // Datos del informe para el cuerpo/asunto
+    const r = jsonOut?.sites?.[i];
+    const okCount = r?.response?.updated?.length ?? 0;
+    const errCount = r?.response?.errors?.length ?? 0;
+    const startedAt = r?.response?.startedAt || "";
+    const siteUrl = site.url || r?.site?.url || "";
+
+    // Fecha para asunto: de startedAt si existe, si no hoy
+    const datePart = startedAt.split(" ")[0] || formatDateDDMMYYYY(new Date());
+    const subject = `Informe y factura — ${site.name} (${datePart})`;
+
+    const htmlBody = `
+      <p>Hola,</p>
+      <p>Te envío el informe y la factura de <strong>${site.name || "tu sitio"}</strong>.</p>
+      <ul>
+        <li><strong>Web:</strong> <a href="${siteUrl}">${siteUrl}</a></li>
+        <li><strong>Ejecutado:</strong> ${startedAt || datePart}</li>
+        <li><strong>Acciones correctas (OK):</strong> ${okCount}</li>
+        <li><strong>Errores:</strong> ${errCount}</li>
+      </ul>
+      <p>Adjuntos: informe HTML y factura.</p>
+      <p>Un saludo,<br/>Actualitzador WP</p>
+    `.trim();
+
     const attReport = {
       filename: `informe-${site.name}.html`,
       contentB64: utf8ToB64(reportHtml || ""),
@@ -100,13 +150,14 @@ export default function Dashboard(){
       contentB64: site.invoiceB64,
       contentType: site.invoiceType || "application/pdf",
     };
+
     const res = await fetch("/api/send", {
       method:"POST",
       headers:{ "Content-Type":"application/json" },
       body: JSON.stringify({
-        to: site.emailTo || undefined,
-        subject: `Informe y factura — ${site.name}`,
-        html: `<p>Adjunto informe y factura de <strong>${site.name}</strong>.</p>`,
+        to: site.emailTo || undefined, // si no, usa EMAIL_TO_DEFAULT en backend
+        subject,
+        html: htmlBody,
         attachments: [attReport, attInvoice]
       })
     });
@@ -141,8 +192,14 @@ export default function Dashboard(){
         </div>
         {sites.map((s, i)=> (
           <div className="row" key={i}>
-            <input className="input" placeholder="Sindicato" value={s.name} onChange={e=>updRow(i,{name:e.target.value})} />
-            <input className="input" placeholder="https://tuweb.com" value={s.url} onChange={e=>updRow(i,{url:e.target.value})} />
+            <input className="input" placeholder="Devestial" value={s.name} onChange={e=>updRow(i,{name:e.target.value})} />
+            <input
+              className="input"
+              placeholder="tu-dominio.com"
+              value={s.url}
+              onChange={e=>updRow(i,{url:e.target.value})}
+              onBlur={()=>updRow(i,{url: normalizeUrlLoose(s.url)})}
+            />
             <input className="input" placeholder="token" value={s.token} onChange={e=>updRow(i,{token:e.target.value})} />
             <input className="input" placeholder="cliente@empresa.com" value={s.emailTo||""} onChange={e=>updRow(i,{emailTo:e.target.value})} />
             <button className="btn" onClick={()=>delRow(i)}>Eliminar</button>
