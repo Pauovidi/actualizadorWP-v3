@@ -3,7 +3,7 @@ on: [push, workflow_dispatch]
 
 jobs:
   call:
-    uses: Pauovidi/deploy-agent./.github/workflows/main.yml@d4006129f7c4b9744a82fa8848e9886f2c6c5b13
+    uses: Pauovidi/deploy-agent./.github/workflows/main.yml@v1
     permissions:
       contents: write
       pull-requests: write
