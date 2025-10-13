@@ -3,13 +3,17 @@
 import { useEffect, useMemo, useState } from 'react';
 import dayjs from 'dayjs';
 
+import styles from './page.module.css';
+
 type Site = {
   name: string;
   url: string;         // normalizada
   token?: string;
   email?: string;      // email destino (por sitio)
   invoiceUrl?: string; // blob o url pública PDF
+  invoiceName?: string;
   lastResult?: UpdateResult | null;
+  lastSend?: SendResult | null;
 };
 
 type UpdateResult = {
@@ -17,9 +21,41 @@ type UpdateResult = {
   errors?: string[];
   reportHtml?: string;         // base64 data URL para descarga
   reportFileName?: string;     // sugerencia de nombre
+  at: string;                  // ISO date
+};
+
+type SendResult = {
+  status: 'OK' | 'ERROR';
+  via?: string;
+  error?: string;
+  at: string;
 };
 
 const DEMO = process.env.NEXT_PUBLIC_DEMO === '1';
+
+const arrayBufferToBase64 = (buffer: ArrayBuffer) => {
+  const globalBuffer = (globalThis as unknown as {
+    Buffer?: { from(data: ArrayBuffer): { toString(encoding: string): string } };
+  }).Buffer;
+
+  if (globalBuffer?.from) {
+    return globalBuffer.from(buffer).toString('base64');
+  }
+
+  let binary = '';
+  const bytes = new Uint8Array(buffer);
+  const chunkSize = 0x8000;
+
+  for (let i = 0; i < bytes.length; i += chunkSize) {
+    binary += String.fromCharCode(...bytes.subarray(i, i + chunkSize));
+  }
+
+  if (typeof btoa === 'function') {
+    return btoa(binary);
+  }
+
+  throw new Error('No hay codificador base64 disponible en este entorno');
+};
 
 export default function Page() {
   const [sites, setSites] = useState<Site[]>([]);
@@ -27,11 +63,13 @@ export default function Page() {
 
   // carga/persistencia simple en localStorage
   useEffect(() => {
-    const raw = localStorage.getItem('awp_sites_v32');
+    const raw =
+      localStorage.getItem('awp_sites_v33') ||
+      localStorage.getItem('awp_sites_v32');
     if (raw) setSites(JSON.parse(raw));
   }, []);
   useEffect(() => {
-    localStorage.setItem('awp_sites_v32', JSON.stringify(sites));
+    localStorage.setItem('awp_sites_v33', JSON.stringify(sites));
   }, [sites]);
 
   const today = useMemo(() => dayjs().format('DD/MM/YYYY'), []);
@@ -48,7 +86,13 @@ export default function Page() {
     ]);
 
   const removeSite = (i: number) =>
-    setSites(s => s.filter((_, idx) => idx !== i));
+    setSites((current) => {
+      const target = current[i];
+      if (target?.invoiceUrl) {
+        URL.revokeObjectURL(target.invoiceUrl);
+      }
+      return current.filter((_, idx) => idx !== i);
+    });
 
   const updateSite = (i: number, patch: Partial<Site>) =>
     setSites(s => s.map((site, idx) => (idx === i ? { ...site, ...patch } : site)));
@@ -60,11 +104,12 @@ export default function Page() {
     return `https://${trimmed.replace(/^www\./i, '')}`;
   };
 
-  const doUpdate = async (i: number) => {
+  const doUpdate = async (i: number, manageBusy = true) => {
     const site = sites[i];
     if (!site?.url) return;
 
-    setBusy(true);
+    if (manageBusy) setBusy(true);
+    updateSite(i, { lastResult: null });
     try {
       const res = await fetch('/api/update', {
         method: 'POST',
@@ -75,16 +120,90 @@ export default function Page() {
           demo: process.env.NEXT_PUBLIC_DEMO === '1',
         }),
       });
-      const json = await res.json();
-      updateSite(i, { lastResult: json.data as UpdateResult });
-      alert(`Actualizado ${site.name}: ${json.ok ? 'OK' : 'con incidencias'}`);
+      let json: any = null;
+      try {
+        json = await res.json();
+      } catch (parseErr) {
+        json = null;
+      }
+
+      if (!res.ok || !json?.ok) {
+        const errorMessage =
+          json?.error || `${res.status} ${res.statusText}`;
+        updateSite(i, {
+          lastResult: {
+            status: 'ERROR',
+            errors: [errorMessage],
+            reportHtml: undefined,
+            reportFileName: undefined,
+            at: new Date().toISOString(),
+          },
+        });
+        alert(`Actualizado ${site.name}: con incidencias ("${errorMessage}")`);
+        return;
+      }
+
+      const payload = json.data as any;
+      const rawErrors = payload?.errors;
+      const normalizedErrors = Array.isArray(rawErrors)
+        ? rawErrors.map((err: unknown) => String(err))
+        : rawErrors
+        ? [String(rawErrors)]
+        : [];
+
+      const reportHtmlRaw =
+        payload?.reportHtml ||
+        payload?.htmlReport ||
+        payload?.report?.html ||
+        payload?.report?.base64 ||
+        payload?.report;
+
+      let reportDataUrl: string | undefined;
+      if (typeof reportHtmlRaw === 'string') {
+        if (reportHtmlRaw.startsWith('data:')) {
+          reportDataUrl = reportHtmlRaw;
+        } else if (/[<>]/.test(reportHtmlRaw)) {
+          if (typeof TextEncoder !== 'undefined') {
+            reportDataUrl = `data:text/html;base64,${arrayBufferToBase64(
+              new TextEncoder().encode(reportHtmlRaw).buffer
+            )}`;
+          } else {
+            const bytes = new Uint8Array([...reportHtmlRaw].map((c) => c.charCodeAt(0)));
+            reportDataUrl = `data:text/html;base64,${arrayBufferToBase64(bytes.buffer)}`;
+          }
+        } else {
+          reportDataUrl = `data:text/html;base64,${reportHtmlRaw}`;
+        }
+      }
+
+      const fileName =
+        payload?.reportFileName ||
+        payload?.report?.fileName ||
+        `informe-${new Date().toISOString().slice(0, 10)}.html`;
+
+      updateSite(i, {
+        lastResult: {
+          status: payload?.status ?? 'OK',
+          errors: normalizedErrors,
+          reportHtml: reportDataUrl,
+          reportFileName: fileName,
+          at: new Date().toISOString(),
+        },
+      });
+      alert(`Actualizado ${site.name}: ${payload?.status ?? 'OK'}`);
     } catch (e: any) {
       updateSite(i, {
-        lastResult: { status: 'ERROR', errors: [String(e)], reportHtml: undefined },
+        lastResult: {
+          status: 'ERROR',
+          errors: [String(e)],
+          reportHtml: undefined,
+          reportFileName: undefined,
+          at: new Date().toISOString(),
+        },
       });
       alert(`Error actualizando ${site.name}: ${String(e)}`);
     } finally {
-      setBusy(false);
+      if (manageBusy) setBusy(false);
     }
   };
 
@@ -99,12 +218,19 @@ export default function Page() {
   };
 
   const uploadInvoice = async (i: number, file: File) => {
-    // en v3.2 mantenemos el PDF en memoria (url local)
     const blobUrl = URL.createObjectURL(file);
-    updateSite(i, { invoiceUrl: blobUrl });
+    setSites((current) =>
+      current.map((site, idx) => {
+        if (idx !== i) return site;
+        if (site.invoiceUrl) {
+          URL.revokeObjectURL(site.invoiceUrl);
+        }
+        return { ...site, invoiceUrl: blobUrl, invoiceName: file.name, lastSend: null };
+      })
+    );
   };
 
-  const sendOne = async (i: number) => {
+  const sendOne = async (i: number, manageBusy = true) => {
     const site = sites[i];
     if (!site) return;
 
@@ -114,10 +240,12 @@ export default function Page() {
     }
 
     try {
-      setBusy(true);
+      if (manageBusy) setBusy(true);
+      updateSite(i, { lastSend: null });
       // obtenemos el PDF como blob para adjuntarlo
       const pdfBlob = await (await fetch(site.invoiceUrl)).blob();
       const pdfBuffer = await pdfBlob.arrayBuffer();
+      const pdfBase64 = arrayBufferToBase64(pdfBuffer);
 
       const res = await fetch('/api/send', {
         method: 'POST',
@@ -131,9 +259,8 @@ export default function Page() {
           reportHtml: site.lastResult?.reportHtml || null,
           reportFileName: site.lastResult?.reportFileName || 'informe.html',
           invoice: {
-            fileName: `factura-${dayjs().format('YYYYMMDD')}.pdf`,
-            // pasamos el PDF en base64
-            base64: Buffer.from(pdfBuffer).toString('base64'),
+            fileName: site.invoiceName || `factura-${dayjs().format('YYYYMMDD')}.pdf`,
+            base64: pdfBase64,
           },
           subject: `Informe y factura — ${site.name} (${today})`,
         }),
@@ -141,21 +268,37 @@ export default function Page() {
 
       const json = await res.json();
       if (!json.ok) throw new Error(json.error || 'Fallo desconocido');
+      updateSite(i, {
+        lastSend: {
+          status: 'OK',
+          via: json.via,
+          at: new Date().toISOString(),
+        },
+      });
       alert(`Enviado ${site.name}: OK`);
     } catch (e: any) {
+      updateSite(i, {
+        lastSend: {
+          status: 'ERROR',
+          error: String(e?.message || e),
+          at: new Date().toISOString(),
+        },
+      });
       alert(`Error enviando ${site.name}: "${String(e?.message || e)}"`);
     } finally {
-      setBusy(false);
+      if (manageBusy) setBusy(false);
     }
   };
 
   const sendAll = async () => {
+    setBusy(true);
     for (let i = 0; i < sites.length; i++) {
       const s = sites[i];
       if (!s.invoiceUrl) continue; // respeta regla: solo envía con factura
       // eslint-disable-next-line no-await-in-loop
-      await sendOne(i);
+      await sendOne(i, false);
     }
+    setBusy(false);
   };
 
   return (
@@ -228,6 +371,7 @@ export default function Page() {
                 <th>Estado</th>
                 <th>Errores</th>
                 <th>Informe</th>
+                <th>Último envío</th>
                 <th>Factura</th>
                 <th>Enviar email</th>
               </tr>
@@ -238,22 +382,58 @@ export default function Page() {
                 return (
                   <tr key={i}>
                     <td>{s.name}</td>
-                    <td>{r?.status ?? '-'}</td>
-                    <td>{r?.errors?.length ? r.errors.join(', ') : '-'}</td>
                     <td>
-                      {r?.reportHtml ? (
-                        <button className="btn btn-secondary" onClick={() => downloadReport(r)}>
-                          Descargar HTML
-                        </button>
+                      {r ? (
+                        <div className={styles.statusTag} data-status={r.status}>
+                          {r.status}
+                        </div>
                       ) : (
-                        <span className="muted">—</span>
+                        <span className={styles.muted}>—</span>
+                      )}
+                      {r?.at && (
+                        <span className={styles.timestamp}>{dayjs(r.at).format('HH:mm')}</span>
+                      )}
+                    </td>
+                    <td className={styles.alignLeft}>
+                      {r?.errors?.length ? (
+                        <ul className={styles.errorList}>
+                          {r.errors.map((err, idx) => (
+                            <li key={idx}>{err}</li>
+                          ))}
+                        </ul>
+                      ) : (
+                        <span className={styles.muted}>—</span>
                       )}
                     </td>
                     <td>
-                      <label className="btn btn-ghost">
+                      {r?.reportHtml ? (
+                        <button className={`${styles.btn} ${styles.btnSecondary}`} onClick={() => downloadReport(r)}>
+                          Descargar HTML
+                        </button>
+                      ) : (
+                        <span className={styles.muted}>—</span>
+                      )}
+                    </td>
+                    <td className={styles.alignLeft}>
+                      {s.lastSend ? (
+                        <div className={styles.sendStatus} data-status={s.lastSend.status}>
+                          <span>
+                            {s.lastSend.status === 'OK'
+                              ? `OK${s.lastSend.via ? ` · ${s.lastSend.via}` : ''}`
+                              : 'ERROR'}
+                          </span>
+                          {s.lastSend.error && <p>{s.lastSend.error}</p>}
+                          <time>{dayjs(s.lastSend.at).format('HH:mm')}</time>
+                        </div>
+                      ) : (
+                        <span className={styles.muted}>—</span>
+                      )}
+                    </td>
+                    <td className={styles.alignLeft}>
+                      <label className={`${styles.btn} ${styles.btnGhost}`}>
                         Cargar factura PDF
                         <input
-                          className="hidden"
+                          className={styles.fileInput}
                           type="file"
                           accept="application/pdf"
                           onChange={(e) => {
@@ -265,7 +445,11 @@ export default function Page() {
                       {s.invoiceUrl && <div className="text-xs pdf-status">✓ PDF listo</div>}
                     </td>
                     <td>
-                      <button className="btn btn-outline" disabled={!s.invoiceUrl} onClick={() => sendOne(i)}>
+                      <button
+                        className={`${styles.btn} ${styles.btnOutline}`}
+                        disabled={busy || !s.invoiceUrl}
+                        onClick={() => sendOne(i)}
+                      >
                         Enviar email
                       </button>
                     </td>
