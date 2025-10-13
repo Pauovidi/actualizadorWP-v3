@@ -13,6 +13,7 @@ type Site = {
   invoiceUrl?: string; // blob o url pública PDF
   invoiceName?: string;
   lastResult?: UpdateResult | null;
+  lastSend?: SendResult | null;
 };
 
 type UpdateResult = {
@@ -20,6 +21,14 @@ type UpdateResult = {
   errors?: string[];
   reportHtml?: string;         // base64 data URL para descarga
   reportFileName?: string;     // sugerencia de nombre
+  at: string;                  // ISO date
+};
+
+type SendResult = {
+  status: 'OK' | 'ERROR';
+  via?: string;
+  error?: string;
+  at: string;
 };
 
 const DEMO = process.env.NEXT_PUBLIC_DEMO === '1';
@@ -54,11 +63,13 @@ export default function Page() {
 
   // carga/persistencia simple en localStorage
   useEffect(() => {
-    const raw = localStorage.getItem('awp_sites_v32');
+    const raw =
+      localStorage.getItem('awp_sites_v33') ||
+      localStorage.getItem('awp_sites_v32');
     if (raw) setSites(JSON.parse(raw));
   }, []);
   useEffect(() => {
-    localStorage.setItem('awp_sites_v32', JSON.stringify(sites));
+    localStorage.setItem('awp_sites_v33', JSON.stringify(sites));
   }, [sites]);
 
   const today = useMemo(() => dayjs().format('DD/MM/YYYY'), []);
@@ -93,11 +104,12 @@ export default function Page() {
     return `https://${trimmed.replace(/^www\./i, '')}`;
   };
 
-  const doUpdate = async (i: number) => {
+  const doUpdate = async (i: number, manageBusy = true) => {
     const site = sites[i];
     if (!site?.url) return;
 
-    setBusy(true);
+    if (manageBusy) setBusy(true);
+    updateSite(i, { lastResult: null });
     try {
       const res = await fetch('/api/update', {
         method: 'POST',
@@ -130,20 +142,51 @@ export default function Page() {
         return;
       }
 
-      const payload = json.data as UpdateResult | undefined;
-      const rawErrors = (payload as any)?.errors;
+      const payload = json.data as any;
+      const rawErrors = payload?.errors;
       const normalizedErrors = Array.isArray(rawErrors)
         ? rawErrors.map((err: unknown) => String(err))
         : rawErrors
         ? [String(rawErrors)]
         : [];
 
+      const reportHtmlRaw =
+        payload?.reportHtml ||
+        payload?.htmlReport ||
+        payload?.report?.html ||
+        payload?.report?.base64 ||
+        payload?.report;
+
+      let reportDataUrl: string | undefined;
+      if (typeof reportHtmlRaw === 'string') {
+        if (reportHtmlRaw.startsWith('data:')) {
+          reportDataUrl = reportHtmlRaw;
+        } else if (/[<>]/.test(reportHtmlRaw)) {
+          if (typeof TextEncoder !== 'undefined') {
+            reportDataUrl = `data:text/html;base64,${arrayBufferToBase64(
+              new TextEncoder().encode(reportHtmlRaw).buffer
+            )}`;
+          } else {
+            const bytes = new Uint8Array([...reportHtmlRaw].map((c) => c.charCodeAt(0)));
+            reportDataUrl = `data:text/html;base64,${arrayBufferToBase64(bytes.buffer)}`;
+          }
+        } else {
+          reportDataUrl = `data:text/html;base64,${reportHtmlRaw}`;
+        }
+      }
+
+      const fileName =
+        payload?.reportFileName ||
+        payload?.report?.fileName ||
+        `informe-${new Date().toISOString().slice(0, 10)}.html`;
+
       updateSite(i, {
         lastResult: {
           status: payload?.status ?? 'OK',
           errors: normalizedErrors,
-          reportHtml: payload?.reportHtml,
-          reportFileName: payload?.reportFileName,
+          reportHtml: reportDataUrl,
+          reportFileName: fileName,
+          at: new Date().toISOString(),
         },
       });
       alert(`Actualizado ${site.name}: ${payload?.status ?? 'OK'}`);
@@ -154,11 +197,12 @@ export default function Page() {
           errors: [String(e)],
           reportHtml: undefined,
           reportFileName: undefined,
+          at: new Date().toISOString(),
         },
       });
       alert(`Error actualizando ${site.name}: ${String(e)}`);
     } finally {
-      setBusy(false);
+      if (manageBusy) setBusy(false);
     }
   };
 
@@ -180,12 +224,12 @@ export default function Page() {
         if (site.invoiceUrl) {
           URL.revokeObjectURL(site.invoiceUrl);
         }
-        return { ...site, invoiceUrl: blobUrl, invoiceName: file.name };
+        return { ...site, invoiceUrl: blobUrl, invoiceName: file.name, lastSend: null };
       })
     );
   };
 
-  const sendOne = async (i: number) => {
+  const sendOne = async (i: number, manageBusy = true) => {
     const site = sites[i];
     if (!site) return;
 
@@ -195,7 +239,8 @@ export default function Page() {
     }
 
     try {
-      setBusy(true);
+      if (manageBusy) setBusy(true);
+      updateSite(i, { lastSend: null });
       // obtenemos el PDF como blob para adjuntarlo
       const pdfBlob = await (await fetch(site.invoiceUrl)).blob();
       const pdfBuffer = await pdfBlob.arrayBuffer();
@@ -222,25 +267,43 @@ export default function Page() {
 
       const json = await res.json();
       if (!json.ok) throw new Error(json.error || 'Fallo desconocido');
+      updateSite(i, {
+        lastSend: {
+          status: 'OK',
+          via: json.via,
+          at: new Date().toISOString(),
+        },
+      });
       alert(`Enviado ${site.name}: OK`);
     } catch (e: any) {
+      updateSite(i, {
+        lastSend: {
+          status: 'ERROR',
+          error: String(e?.message || e),
+          at: new Date().toISOString(),
+        },
+      });
       alert(`Error enviando ${site.name}: "${String(e?.message || e)}"`);
     } finally {
-      setBusy(false);
+      if (manageBusy) setBusy(false);
     }
   };
 
   const sendAll = async () => {
+    setBusy(true);
     for (let i = 0; i < sites.length; i++) {
       const s = sites[i];
       if (!s.invoiceUrl) continue; // respeta regla: solo envía con factura
       // eslint-disable-next-line no-await-in-loop
-      await sendOne(i);
+      await sendOne(i, false);
     }
+    setBusy(false);
   };
 
   return (
     <main className={styles.main}>
+      {DEMO && <span className={styles.demoBadge}>DEMO</span>}
+
       <header className={styles.topbar}>
         <div className={styles.titleGroup}>
           <h1 className={styles.title}>Panel Actualizador WP</h1>
@@ -251,7 +314,6 @@ export default function Page() {
             </p>
           )}
         </div>
-        {DEMO && <span className={styles.demoBadge}>DEMO</span>}
       </header>
 
       {/* Editor de sitios */}
@@ -302,7 +364,14 @@ export default function Page() {
           <button
             className={`${styles.btn} ${styles.btnPrimary}`}
             disabled={busy}
-            onClick={() => sites.forEach((_, idx) => doUpdate(idx))}
+            onClick={async () => {
+              setBusy(true);
+              for (let idx = 0; idx < sites.length; idx++) {
+                // eslint-disable-next-line no-await-in-loop
+                await doUpdate(idx, false);
+              }
+              setBusy(false);
+            }}
           >
             {busy ? 'Actualizando…' : 'Actualizar Todo'}
           </button>
@@ -321,6 +390,7 @@ export default function Page() {
                 <th>Estado</th>
                 <th>Errores</th>
                 <th>Informe</th>
+                <th>Último envío</th>
                 <th>Factura</th>
                 <th>Enviar email</th>
               </tr>
@@ -331,8 +401,29 @@ export default function Page() {
                 return (
                   <tr key={i}>
                     <td>{s.name}</td>
-                    <td>{r?.status ?? '-'}</td>
-                    <td>{r?.errors?.length ? r.errors.join(', ') : '-'}</td>
+                    <td>
+                      {r ? (
+                        <div className={styles.statusTag} data-status={r.status}>
+                          {r.status}
+                        </div>
+                      ) : (
+                        <span className={styles.muted}>—</span>
+                      )}
+                      {r?.at && (
+                        <span className={styles.timestamp}>{dayjs(r.at).format('HH:mm')}</span>
+                      )}
+                    </td>
+                    <td className={styles.alignLeft}>
+                      {r?.errors?.length ? (
+                        <ul className={styles.errorList}>
+                          {r.errors.map((err, idx) => (
+                            <li key={idx}>{err}</li>
+                          ))}
+                        </ul>
+                      ) : (
+                        <span className={styles.muted}>—</span>
+                      )}
+                    </td>
                     <td>
                       {r?.reportHtml ? (
                         <button className={`${styles.btn} ${styles.btnSecondary}`} onClick={() => downloadReport(r)}>
@@ -342,7 +433,22 @@ export default function Page() {
                         <span className={styles.muted}>—</span>
                       )}
                     </td>
-                    <td>
+                    <td className={styles.alignLeft}>
+                      {s.lastSend ? (
+                        <div className={styles.sendStatus} data-status={s.lastSend.status}>
+                          <span>
+                            {s.lastSend.status === 'OK'
+                              ? `OK${s.lastSend.via ? ` · ${s.lastSend.via}` : ''}`
+                              : 'ERROR'}
+                          </span>
+                          {s.lastSend.error && <p>{s.lastSend.error}</p>}
+                          <time>{dayjs(s.lastSend.at).format('HH:mm')}</time>
+                        </div>
+                      ) : (
+                        <span className={styles.muted}>—</span>
+                      )}
+                    </td>
+                    <td className={styles.alignLeft}>
                       <label className={`${styles.btn} ${styles.btnGhost}`}>
                         Cargar factura PDF
                         <input
@@ -364,7 +470,7 @@ export default function Page() {
                     <td>
                       <button
                         className={`${styles.btn} ${styles.btnOutline}`}
-                        disabled={!s.invoiceUrl}
+                        disabled={busy || !s.invoiceUrl}
                         onClick={() => sendOne(i)}
                       >
                         Enviar email
@@ -378,7 +484,7 @@ export default function Page() {
         </div>
 
         <div className={`${styles.cardActions} ${styles.cardActionsEnd}`}>
-          <button className={`${styles.btn} ${styles.btnPrimary}`} onClick={sendAll}>
+          <button className={`${styles.btn} ${styles.btnPrimary}`} disabled={busy} onClick={sendAll}>
             Enviar todos
           </button>
         </div>
