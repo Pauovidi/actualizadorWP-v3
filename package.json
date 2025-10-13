@@ -9,7 +9,8 @@
     "start": "next start",
     "smoke": "node scripts/smoke.mjs",
     "postinstall": "npm run ensure-types",
-    "ensure-types": "npm ls @types/react >/dev/null 2>&1 || npm i -D @types/react@18.2.66 @types/react-dom@18.2.22 @types/node@20.12.12"
+    "ensure-types": "npm ls @types/react >/dev/null 2>&1 || npm i -D @types/react@18.2.66 @types/react-dom@18.2.22 @types/node@20.12.12",
+    "lint": "next lint"
   },
   "dependencies": {
     "@sparticuz/chromium": "123.0.1",
@@ -24,6 +25,8 @@
     "@types/node": "^20.14.10",
     "@types/react": "^18.3.5",
     "@types/react-dom": "^18.3.0",
+    "eslint": "^8.57.0",
+    "eslint-config-next": "14.2.3",
     "typescript": "^5.5.4"
   },
   "engines": {

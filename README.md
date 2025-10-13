@@ -47,3 +47,6 @@ Realiza estos pasos **desde la raíz del proyecto** (la carpeta donde está este
    La opción `-u` deja configurada la rama remota para futuros `git push`/`git pull` sin parámetros.
 
 Si trabajas en otra rama, sustituye `work` por el nombre de la rama que quieras publicar.
+
+## Comandos de verificación
+- `npm run lint`: ejecuta las reglas de ESLint recomendadas por Next.js para detectar problemas comunes antes de hacer deploy.
