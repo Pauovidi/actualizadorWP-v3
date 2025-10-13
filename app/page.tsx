@@ -302,24 +302,15 @@ export default function Page() {
   };
 
   return (
-    <main className={styles.main}>
-      {DEMO && <span className={styles.demoBadge}>DEMO</span>}
-
-      <header className={styles.topbar}>
-        <div className={styles.titleGroup}>
-          <h1 className={styles.title}>Panel Actualizador WP</h1>
-          {DEMO && (
-            <p className={styles.demoLegend}>
-              Modo demo activo: los informes se generan con datos de ejemplo y no se
-              envían correos reales.
-            </p>
-          )}
-        </div>
+    <main className="main">
+      <header className="topbar">
+        <h1 className="title">Panel Actualizador WP</h1>
+        {DEMO && <span className="demo">DEMO</span>}
       </header>
 
       {/* Editor de sitios */}
-      <section className={`${styles.card} ${styles.cardStack}`}>
-        <div className={styles.gridHeader}>
+      <section className="card card-stack">
+        <div className="grid-header">
           <div>Nombre</div>
           <div>URL</div>
           <div>Token</div>
@@ -327,64 +318,53 @@ export default function Page() {
         </div>
 
         {sites.map((s, i) => (
-          <div className={styles.siteRow} key={i}>
+          <div className="site-row" key={i}>
             <input
-              className={styles.input}
+              className="input"
               value={s.name}
               onChange={(e) => updateSite(i, { name: e.target.value })}
             />
             <input
-              className={styles.input}
+              className="input"
               value={s.url}
               onChange={(e) => updateSite(i, { url: e.target.value })}
             />
             <input
-              className={styles.input}
+              className="input"
               value={s.token ?? ''}
               onChange={(e) => updateSite(i, { token: e.target.value })}
             />
-            <div className={styles.emailCell}>
+            <div className="email-cell">
               <input
                 type="email"
-                className={`${styles.input} ${!s.email ? styles.inputError : ''}`}
+                className={`input ${!s.email ? 'input-error' : ''}`}
                 placeholder="cliente@dominio.com"
                 value={s.email ?? ''}
                 onChange={(e) => updateSite(i, { email: e.target.value })}
               />
-              <button className={`${styles.btn} ${styles.btnGhost}`} onClick={() => removeSite(i)}>
+              <button className="btn btn-ghost" onClick={() => removeSite(i)}>
                 Eliminar
               </button>
             </div>
           </div>
         ))}
 
-        <div className={styles.cardActions}>
-          <button className={`${styles.btn} ${styles.btnGhost}`} onClick={addSite}>
+        <div className="card-actions">
+          <button className="btn btn-ghost" onClick={addSite}>
             Añadir sitio
           </button>
-          <button
-            className={`${styles.btn} ${styles.btnPrimary}`}
-            disabled={busy}
-            onClick={async () => {
-              setBusy(true);
-              for (let idx = 0; idx < sites.length; idx++) {
-                // eslint-disable-next-line no-await-in-loop
-                await doUpdate(idx, false);
-              }
-              setBusy(false);
-            }}
-          >
+          <button className="btn btn-primary" disabled={busy} onClick={() => sites.forEach((_, idx) => doUpdate(idx))}>
             {busy ? 'Actualizando…' : 'Actualizar Todo'}
           </button>
         </div>
       </section>
 
       {/* Resultados */}
-      <section className={`${styles.card} ${styles.cardStack}`}>
-        <h2 className={styles.sectionTitle}>Resultados</h2>
+      <section className="card card-stack">
+        <h2 className="section-title">Resultados</h2>
 
-        <div className={styles.resultsWrapper}>
-          <table className={styles.resultsTable}>
+        <div className="results-wrapper">
+          <table className="results-table">
             <thead>
               <tr>
                 <th>Sitio</th>
@@ -462,11 +442,7 @@ export default function Page() {
                           }}
                         />
                       </label>
-                      {s.invoiceName && (
-                        <div className={styles.fileName} title={s.invoiceName}>
-                          {s.invoiceName}
-                        </div>
-                      )}
+                      {s.invoiceUrl && <div className="text-xs pdf-status">✓ PDF listo</div>}
                     </td>
                     <td>
                       <button
@@ -484,10 +460,8 @@ export default function Page() {
           </table>
         </div>
 
-        <div className={`${styles.cardActions} ${styles.cardActionsEnd}`}>
-          <button className={`${styles.btn} ${styles.btnPrimary}`} disabled={busy} onClick={sendAll}>
-            Enviar todos
-          </button>
+        <div className="card-actions card-actions--end">
+          <button className="btn btn-primary" onClick={sendAll}>Enviar todos</button>
         </div>
       </section>
     </main>

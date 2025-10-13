@@ -56,36 +56,3 @@ Realiza estos pasos **desde la raíz del proyecto** (la carpeta donde está este
    La opción `-u` deja configurada la rama remota para futuros `git push`/`git pull` sin parámetros.
 
 Si trabajas en otra rama, sustituye `work` por el nombre de la rama que quieras publicar.
-
-## Cómo actualizar la rama Codex y fusionar en `main`
-Sigue este flujo cuando quieras incorporar los cambios de esta rama al despliegue principal en Vercel:
-
-1. **Sincroniza `main` en local**
-   ```bash
-   git checkout main
-   git pull origin main
-   ```
-2. **Actualiza la rama de trabajo** (por ejemplo `work` o `chore/sync-codex-branch-into-main`)
-   ```bash
-   git checkout work
-   git merge main
-   # o bien
-   git rebase main
-   ```
-   Resuelve cualquier conflicto y confirma el merge/rebase.
-3. **Empuja la rama actualizada**
-   ```bash
-   git push
-   ```
-4. **Abre o actualiza el Pull Request hacia `main`**
-   - Usa el título `chore: sync Codex branch into main (remove workflows, align deploy)` para mantener el historial coherente.
-   - Comprueba que el PR elimine `.github/workflows/` y conserve los archivos clave (`app/`, `next.config.js`, `scripts/smoke.mjs`, `public/`, `package.json`, `tsconfig.json`, `types/`, `lib/`, `DEPLOY_STATE.md`).
-5. **Fusiona el PR**
-   - Si está disponible, selecciona **Squash & merge**. En caso contrario, usa el método que permita la protección de rama.
-   - Si la rama `main` está protegida, solicita la aprobación necesaria y deja el PR listo (checks verdes y sin conflictos).
-6. **Verifica Vercel**
-   - Confirma que el proyecto despliega desde la rama `main` con Node.js 20.x.
-   - Revisa que el *Root Directory* sea el de la raíz del repo y que las variables (`SMTP`, tokens, etc.) sigan definidas.
-
-## Comandos de verificación
-- `npm run lint`: ejecuta las reglas de ESLint recomendadas por Next.js para detectar problemas comunes antes de hacer deploy.
