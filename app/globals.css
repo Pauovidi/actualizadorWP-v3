@@ -1,8 +1,4 @@
-@tailwind base;
-@tailwind components;
-@tailwind utilities;
-
-/* Tokens básicos que ya usa tu UI */
+/* app/globals.css — vanilla CSS, sin Tailwind */
 :root{
   --bg:#0b1020;
   --card:#111827;
