@@ -1,0 +1,17 @@
+name: Runner Sanity
+on: workflow_dispatch
+
+jobs:
+  ping:
+    runs-on: self-hosted
+    steps:
+      - name: Who am I
+        shell: pwsh
+        run: |
+          Write-Host "Runner labels: $env:RUNNER_NAME ($env:RUNNER_OS/$env:RUNNER_ARCH)"
+          Write-Host "Workspace: $env:GITHUB_WORKSPACE"
+      - name: Echo timestamp
+        shell: pwsh
+        run: |
+          $d = Get-Date -Format "yyyy-MM-dd HH:mm:ss"
+          Write-Host "Runner OK: $d"
