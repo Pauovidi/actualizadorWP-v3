@@ -22,7 +22,14 @@ EMAIL_TO_DEFAULT=...
 En la parte superior ahora verás la columna **Email destino**. Si se deja vacío, el backend usará `EMAIL_TO_DEFAULT`.
 
 ## Cómo conectar con tu repositorio de GitHub
-Realiza estos pasos **desde la raíz del proyecto** (la carpeta donde está este archivo `README.md`). Si estás utilizando una terminal integrada en tu editor, asegúrate de que el prompt muestra `actualizadorWP-v3` antes del símbolo `#` o `$`.
+Realiza estos pasos **desde la raíz del proyecto** (la carpeta donde está este archivo `README.md`).
+
+> 💡 Para situarte en esa carpeta abre una **terminal** (por ejemplo, la integrada en VS Code) y ejecuta:
+> ```bash
+> cd /ruta/al/proyecto/actualizadorWP-v3
+> pwd
+> ```
+> El comando `pwd` debe devolver una ruta que termine en `actualizadorWP-v3`. En ese mismo terminal ya puedes seguir con los pasos.
 
 1. Añade el remoto que apunta a tu repositorio en GitHub (solo la primera vez):
    ```bash
