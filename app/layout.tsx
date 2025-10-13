@@ -1,5 +1,5 @@
 // app/layout.tsx
-import "./globals.css"; // 👈 IMPORTANTE
+import "./globals.css"; // 👈 imprescindible
 
 export const metadata = {
   title: "Panel Actualizador WP",
@@ -9,9 +9,7 @@ export const metadata = {
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
     <html lang="es">
-      <head>
-        <link rel="icon" href="/favicon.ico" />
-      </head>
+      <head><link rel="icon" href="/favicon.ico" /></head>
       <body>{children}</body>
     </html>
   );
