@@ -28,7 +28,7 @@ Este archivo sirve como fuente de verdad para el futuro Agente de Deploy Devesti
 | Utilidad | dayjs | ^1.11.13 | Fechas |
 | Email | nodemailer | ^6.9.12 | SMTP / envío de informes |
 | Capturas | puppeteer-core | ^22.15.0 | Motor de capturas headless |
-| Capturas | @sparticuz/chromium | ^123.0.2 | Chromium optimizado para serverless |
+| Capturas | @sparticuz/chromium | 123.0.1 | Chromium optimizado para serverless |
 
 ## 🧩 DevDependencies
 | Paquete | Rol |
@@ -40,7 +40,7 @@ Este archivo sirve como fuente de verdad para el futuro Agente de Deploy Devesti
 
 ## 🧰 Configuración clave
 - Sin `vercel.json`: Vercel detecta automáticamente Node 20.x y Next.js.  
-- Sin `postinstall` ni `ensure-types`: innecesarios en entorno CI/CD.  
+- `postinstall` lanza `npm run ensure-types` para garantizar tipados en entornos limpios.
 - Sin `zod`: validaciones internas simplificadas.  
 - Estructura estándar Next 14 (`/app`, `/api`, `/public`).
 
