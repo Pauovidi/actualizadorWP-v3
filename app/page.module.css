@@ -9,9 +9,15 @@
 
 .topbar {
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   justify-content: space-between;
   gap: 12px;
+}
+
+.titleGroup {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
 }
 
 .title {
@@ -28,6 +34,14 @@
   font-size: 12px;
   font-weight: 600;
   letter-spacing: 0.06em;
+}
+
+.demoLegend {
+  margin: 0;
+  color: var(--muted);
+  font-size: 14px;
+  line-height: 1.5;
+  max-width: 520px;
 }
 
 .card {
@@ -203,6 +217,11 @@
 }
 
 @media (max-width: 960px) {
+  .topbar {
+    flex-direction: column;
+    gap: 16px;
+  }
+
   .main {
     padding: 32px 16px 48px;
     gap: 24px;
@@ -210,6 +229,10 @@
 
   .card {
     padding: 20px;
+  }
+
+  .demoBadge {
+    align-self: flex-start;
   }
 
   .cardActions {

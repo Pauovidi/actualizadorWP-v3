@@ -200,7 +200,15 @@ export default function Page() {
   return (
     <main className={styles.main}>
       <header className={styles.topbar}>
-        <h1 className={styles.title}>Panel Actualizador WP</h1>
+        <div className={styles.titleGroup}>
+          <h1 className={styles.title}>Panel Actualizador WP</h1>
+          {DEMO && (
+            <p className={styles.demoLegend}>
+              Modo demo activo: los informes se generan con datos de ejemplo y no se
+              envían correos reales.
+            </p>
+          )}
+        </div>
         {DEMO && <span className={styles.demoBadge}>DEMO</span>}
       </header>
 

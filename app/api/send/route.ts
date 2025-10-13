@@ -1,4 +1,7 @@
+import { Buffer } from 'node:buffer';
 import { NextResponse } from 'next/server';
+
+export const runtime = 'nodejs';
 
 type SendBody = {
   site: { name: string; url: string; email?: string | null };
