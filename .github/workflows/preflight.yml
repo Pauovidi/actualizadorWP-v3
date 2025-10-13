@@ -1,0 +1,50 @@
+name: Preflight (build + smoke)
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - "app/**"
+      - "components/**"
+      - "pages/**"
+      - "public/**"
+      - "styles/**"
+      - "lib/**"
+      - "next.config.*"
+      - "tailwind.config.*"
+      - "postcss.config.*"
+      - "package.json"
+      - "package-lock.json"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  preflight:
+    runs-on: self-hosted   # o ubuntu-latest si prefieres runners de GitHub
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+
+      - name: Install deps (ci)
+        run: npm ci
+
+      - name: Build (Next.js)
+        run: npm run build
+
+      # Smoke test básico sin levantar servidor:
+      #  - Garantiza que Next generó CSS y que las APIs se compilaron
+      - name: Smoke test
+        run: node scripts/smoke.mjs
+
+      - name: Job summary
+        run: |
+          echo "## Preflight OK" >> $GITHUB_STEP_SUMMARY
+          echo "- Build y smoke pasaron ✅" >> $GITHUB_STEP_SUMMARY
