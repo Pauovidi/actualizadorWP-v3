@@ -3,6 +3,8 @@
 import { useEffect, useMemo, useState } from 'react';
 import dayjs from 'dayjs';
 
+import styles from './page.module.css';
+
 type Site = {
   name: string;
   url: string;         // normalizada
@@ -20,6 +22,30 @@ type UpdateResult = {
 };
 
 const DEMO = process.env.NEXT_PUBLIC_DEMO === '1';
+
+const arrayBufferToBase64 = (buffer: ArrayBuffer) => {
+  const globalBuffer = (globalThis as unknown as {
+    Buffer?: { from(data: ArrayBuffer): { toString(encoding: string): string } };
+  }).Buffer;
+
+  if (globalBuffer?.from) {
+    return globalBuffer.from(buffer).toString('base64');
+  }
+
+  let binary = '';
+  const bytes = new Uint8Array(buffer);
+  const chunkSize = 0x8000;
+
+  for (let i = 0; i < bytes.length; i += chunkSize) {
+    binary += String.fromCharCode(...bytes.subarray(i, i + chunkSize));
+  }
+
+  if (typeof btoa === 'function') {
+    return btoa(binary);
+  }
+
+  throw new Error('No hay codificador base64 disponible en este entorno');
+};
 
 export default function Page() {
   const [sites, setSites] = useState<Site[]>([]);
@@ -48,7 +74,13 @@ export default function Page() {
     ]);
 
   const removeSite = (i: number) =>
-    setSites(s => s.filter((_, idx) => idx !== i));
+    setSites((current) => {
+      const target = current[i];
+      if (target?.invoiceUrl) {
+        URL.revokeObjectURL(target.invoiceUrl);
+      }
+      return current.filter((_, idx) => idx !== i);
+    });
 
   const updateSite = (i: number, patch: Partial<Site>) =>
     setSites(s => s.map((site, idx) => (idx === i ? { ...site, ...patch } : site)));
@@ -99,9 +131,16 @@ export default function Page() {
   };
 
   const uploadInvoice = async (i: number, file: File) => {
-    // en v3.2 mantenemos el PDF en memoria (url local)
     const blobUrl = URL.createObjectURL(file);
-    updateSite(i, { invoiceUrl: blobUrl });
+    setSites((current) =>
+      current.map((site, idx) => {
+        if (idx !== i) return site;
+        if (site.invoiceUrl) {
+          URL.revokeObjectURL(site.invoiceUrl);
+        }
+        return { ...site, invoiceUrl: blobUrl };
+      })
+    );
   };
 
   const sendOne = async (i: number) => {
@@ -118,6 +157,7 @@ export default function Page() {
       // obtenemos el PDF como blob para adjuntarlo
       const pdfBlob = await (await fetch(site.invoiceUrl)).blob();
       const pdfBuffer = await pdfBlob.arrayBuffer();
+      const pdfBase64 = arrayBufferToBase64(pdfBuffer);
 
       const res = await fetch('/api/send', {
         method: 'POST',
@@ -132,8 +172,7 @@ export default function Page() {
           reportFileName: site.lastResult?.reportFileName || 'informe.html',
           invoice: {
             fileName: `factura-${dayjs().format('YYYYMMDD')}.pdf`,
-            // pasamos el PDF en base64
-            base64: Buffer.from(pdfBuffer).toString('base64'),
+            base64: pdfBase64,
           },
           subject: `Informe y factura — ${site.name} (${today})`,
         }),
@@ -159,69 +198,73 @@ export default function Page() {
   };
 
   return (
-    <main className="max-w-6xl mx-auto p-6 text-slate-100">
-      <header className="mb-6 flex items-center justify-between">
-        <h1 className="text-4xl font-extrabold">Panel Actualizador WP</h1>
-        {DEMO && (
-          <span className="px-2 py-1 rounded bg-slate-700 text-xs">DEMO</span>
-        )}
+    <main className={styles.main}>
+      <header className={styles.topbar}>
+        <h1 className={styles.title}>Panel Actualizador WP</h1>
+        {DEMO && <span className={styles.demoBadge}>DEMO</span>}
       </header>
 
       {/* Editor de sitios */}
-      <section className="mb-8 rounded-2xl bg-slate-900/60 p-5 shadow-lg border border-slate-800">
-        <div className="grid grid-cols-12 gap-3 items-center">
-          <div className="col-span-3 font-semibold">Nombre</div>
-          <div className="col-span-4 font-semibold">URL</div>
-          <div className="col-span-2 font-semibold">Token</div>
-          <div className="col-span-3 font-semibold">Email destino</div>
-
-          {sites.map((s, i) => (
-            <div className="contents" key={i}>
-              <input
-                className="col-span-3 input"
-                value={s.name}
-                onChange={(e) => updateSite(i, { name: e.target.value })}
-              />
-              <input
-                className="col-span-4 input"
-                value={s.url}
-                onChange={(e) => updateSite(i, { url: e.target.value })}
-              />
-              <input
-                className="col-span-2 input"
-                value={s.token ?? ''}
-                onChange={(e) => updateSite(i, { token: e.target.value })}
-              />
-              <div className="col-span-3 flex items-center gap-2">
-                <input
-                  type="email"
-                  className={`input flex-1 ${!s.email ? 'input-error' : ''}`}
-                  placeholder="cliente@dominio.com"
-                  value={s.email ?? ''}
-                  onChange={(e) => updateSite(i, { email: e.target.value })}
-                />
-                <button className="btn btn-ghost" onClick={() => removeSite(i)}>
-                  Eliminar
-                </button>
-              </div>
-            </div>
-          ))}
+      <section className={`${styles.card} ${styles.cardStack}`}>
+        <div className={styles.gridHeader}>
+          <div>Nombre</div>
+          <div>URL</div>
+          <div>Token</div>
+          <div>Email destino</div>
         </div>
 
-        <div className="mt-4 flex gap-3">
-          <button className="btn btn-ghost" onClick={addSite}>Añadir sitio</button>
-          <button className="btn btn-primary" disabled={busy} onClick={() => sites.forEach((_, i) => doUpdate(i))}>
+        {sites.map((s, i) => (
+          <div className={styles.siteRow} key={i}>
+            <input
+              className={styles.input}
+              value={s.name}
+              onChange={(e) => updateSite(i, { name: e.target.value })}
+            />
+            <input
+              className={styles.input}
+              value={s.url}
+              onChange={(e) => updateSite(i, { url: e.target.value })}
+            />
+            <input
+              className={styles.input}
+              value={s.token ?? ''}
+              onChange={(e) => updateSite(i, { token: e.target.value })}
+            />
+            <div className={styles.emailCell}>
+              <input
+                type="email"
+                className={`${styles.input} ${!s.email ? styles.inputError : ''}`}
+                placeholder="cliente@dominio.com"
+                value={s.email ?? ''}
+                onChange={(e) => updateSite(i, { email: e.target.value })}
+              />
+              <button className={`${styles.btn} ${styles.btnGhost}`} onClick={() => removeSite(i)}>
+                Eliminar
+              </button>
+            </div>
+          </div>
+        ))}
+
+        <div className={styles.cardActions}>
+          <button className={`${styles.btn} ${styles.btnGhost}`} onClick={addSite}>
+            Añadir sitio
+          </button>
+          <button
+            className={`${styles.btn} ${styles.btnPrimary}`}
+            disabled={busy}
+            onClick={() => sites.forEach((_, idx) => doUpdate(idx))}
+          >
             {busy ? 'Actualizando…' : 'Actualizar Todo'}
           </button>
         </div>
       </section>
 
       {/* Resultados */}
-      <section className="rounded-2xl bg-slate-900/60 p-5 shadow-lg border border-slate-800">
-        <h2 className="text-2xl font-bold mb-4">Resultados</h2>
+      <section className={`${styles.card} ${styles.cardStack}`}>
+        <h2 className={styles.sectionTitle}>Resultados</h2>
 
-        <div className="overflow-x-auto">
-          <table className="results-table w-full">
+        <div className={styles.resultsWrapper}>
+          <table className={styles.resultsTable}>
             <thead>
               <tr>
                 <th>Sitio</th>
@@ -242,18 +285,18 @@ export default function Page() {
                     <td>{r?.errors?.length ? r.errors.join(', ') : '-'}</td>
                     <td>
                       {r?.reportHtml ? (
-                        <button className="btn btn-secondary" onClick={() => downloadReport(r)}>
+                        <button className={`${styles.btn} ${styles.btnSecondary}`} onClick={() => downloadReport(r)}>
                           Descargar HTML
                         </button>
                       ) : (
-                        <span className="muted">—</span>
+                        <span className={styles.muted}>—</span>
                       )}
                     </td>
                     <td>
-                      <label className="btn btn-ghost">
+                      <label className={`${styles.btn} ${styles.btnGhost}`}>
                         Cargar factura PDF
                         <input
-                          className="hidden"
+                          className={styles.fileInput}
                           type="file"
                           accept="application/pdf"
                           onChange={(e) => {
@@ -262,10 +305,14 @@ export default function Page() {
                           }}
                         />
                       </label>
-                      {s.invoiceUrl && <div className="text-xs mt-1">✓ PDF listo</div>}
+                      {s.invoiceUrl && <div className={`${styles.pdfStatus} ${styles.textXs}`}>✓ PDF listo</div>}
                     </td>
                     <td>
-                      <button className="btn btn-outline" disabled={!s.invoiceUrl} onClick={() => sendOne(i)}>
+                      <button
+                        className={`${styles.btn} ${styles.btnOutline}`}
+                        disabled={!s.invoiceUrl}
+                        onClick={() => sendOne(i)}
+                      >
                         Enviar email
                       </button>
                     </td>
@@ -276,45 +323,12 @@ export default function Page() {
           </table>
         </div>
 
-        <div className="mt-4 flex justify-end">
-          <button className="btn btn-primary" onClick={sendAll}>Enviar todos</button>
+        <div className={`${styles.cardActions} ${styles.cardActionsEnd}`}>
+          <button className={`${styles.btn} ${styles.btnPrimary}`} onClick={sendAll}>
+            Enviar todos
+          </button>
         </div>
       </section>
-
-      <style jsx global>{`
-        .input {
-          background: #0f172a;
-          border: 1px solid #334155;
-          border-radius: 12px;
-          padding: 10px 12px;
-          color: #e2e8f0;
-          outline: none;
-        }
-        .input:focus { border-color: #22d3ee; }
-        .input-error { border-color: #ef4444; }
-
-        .btn {
-          border-radius: 12px;
-          padding: 8px 14px;
-          border: 1px solid transparent;
-        }
-        .btn-primary { background:#06b6d4; color:#0b1220; }
-        .btn-secondary { background:#0f172a; border-color:#334155; }
-        .btn-outline { background:transparent; border-color:#334155; }
-        .btn-ghost { background:#0f172a; border-color:#334155; }
-
-        .results-table { border-collapse: separate; border-spacing: 0 10px; }
-        .results-table th, .results-table td {
-          padding: 12px 16px;
-          text-align: center;            /* Alineación pedida */
-          vertical-align: middle;        /* Centrado vertical */
-        }
-        .results-table tbody tr {
-          background: #0f172a;
-          border: 1px solid #334155;
-        }
-        .muted { opacity: .6; }
-      `}</style>
     </main>
   );
 }
