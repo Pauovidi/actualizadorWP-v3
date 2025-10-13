@@ -17,7 +17,7 @@ permissions:
 jobs:
   call:
     name: agent
-    uses: Pauovidi/deploy-agent/.github/workflows/main.yml@v1.0.2
+    uses: Pauovidi/deploy-agent/.github/workflows/main.yml@main
     secrets: inherit
     # Si tu reusable acepta inputs, añade aquí:
     # with:
