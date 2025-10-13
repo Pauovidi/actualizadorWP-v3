@@ -11,6 +11,7 @@ type Site = {
   token?: string;
   email?: string;      // email destino (por sitio)
   invoiceUrl?: string; // blob o url pública PDF
+  invoiceName?: string;
   lastResult?: UpdateResult | null;
 };
 
@@ -107,12 +108,53 @@ export default function Page() {
           demo: process.env.NEXT_PUBLIC_DEMO === '1',
         }),
       });
-      const json = await res.json();
-      updateSite(i, { lastResult: json.data as UpdateResult });
-      alert(`Actualizado ${site.name}: ${json.ok ? 'OK' : 'con incidencias'}`);
+      let json: any = null;
+      try {
+        json = await res.json();
+      } catch (parseErr) {
+        json = null;
+      }
+
+      if (!res.ok || !json?.ok) {
+        const errorMessage =
+          json?.error || `${res.status} ${res.statusText}`;
+        updateSite(i, {
+          lastResult: {
+            status: 'ERROR',
+            errors: [errorMessage],
+            reportHtml: undefined,
+            reportFileName: undefined,
+          },
+        });
+        alert(`Actualizado ${site.name}: con incidencias ("${errorMessage}")`);
+        return;
+      }
+
+      const payload = json.data as UpdateResult | undefined;
+      const rawErrors = (payload as any)?.errors;
+      const normalizedErrors = Array.isArray(rawErrors)
+        ? rawErrors.map((err: unknown) => String(err))
+        : rawErrors
+        ? [String(rawErrors)]
+        : [];
+
+      updateSite(i, {
+        lastResult: {
+          status: payload?.status ?? 'OK',
+          errors: normalizedErrors,
+          reportHtml: payload?.reportHtml,
+          reportFileName: payload?.reportFileName,
+        },
+      });
+      alert(`Actualizado ${site.name}: ${payload?.status ?? 'OK'}`);
     } catch (e: any) {
       updateSite(i, {
-        lastResult: { status: 'ERROR', errors: [String(e)], reportHtml: undefined },
+        lastResult: {
+          status: 'ERROR',
+          errors: [String(e)],
+          reportHtml: undefined,
+          reportFileName: undefined,
+        },
       });
       alert(`Error actualizando ${site.name}: ${String(e)}`);
     } finally {
@@ -138,7 +180,7 @@ export default function Page() {
         if (site.invoiceUrl) {
           URL.revokeObjectURL(site.invoiceUrl);
         }
-        return { ...site, invoiceUrl: blobUrl };
+        return { ...site, invoiceUrl: blobUrl, invoiceName: file.name };
       })
     );
   };
@@ -171,7 +213,7 @@ export default function Page() {
           reportHtml: site.lastResult?.reportHtml || null,
           reportFileName: site.lastResult?.reportFileName || 'informe.html',
           invoice: {
-            fileName: `factura-${dayjs().format('YYYYMMDD')}.pdf`,
+            fileName: site.invoiceName || `factura-${dayjs().format('YYYYMMDD')}.pdf`,
             base64: pdfBase64,
           },
           subject: `Informe y factura — ${site.name} (${today})`,
@@ -313,7 +355,11 @@ export default function Page() {
                           }}
                         />
                       </label>
-                      {s.invoiceUrl && <div className={`${styles.pdfStatus} ${styles.textXs}`}>✓ PDF listo</div>}
+                      {s.invoiceName && (
+                        <div className={styles.fileName} title={s.invoiceName}>
+                          {s.invoiceName}
+                        </div>
+                      )}
                     </td>
                     <td>
                       <button

@@ -8,10 +8,12 @@
 }
 
 .topbar {
+  position: relative;
   display: flex;
   align-items: flex-start;
   justify-content: space-between;
   gap: 12px;
+  padding-right: 80px;
 }
 
 .titleGroup {
@@ -27,13 +29,19 @@
 }
 
 .demoBadge {
-  padding: 4px 10px;
+  position: absolute;
+  top: 0;
+  right: 0;
+  padding: 4px 12px;
   border-radius: 999px;
   border: 1px solid var(--line);
   background: #1f2937;
+  color: var(--fg);
   font-size: 12px;
   font-weight: 600;
-  letter-spacing: 0.06em;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  box-shadow: 0 10px 25px rgba(15, 23, 42, 0.45);
 }
 
 .demoLegend {
@@ -198,6 +206,16 @@
   vertical-align: middle;
 }
 
+.fileName {
+  margin-top: 8px;
+  font-size: 12px;
+  color: var(--muted);
+  text-overflow: ellipsis;
+  overflow: hidden;
+  white-space: nowrap;
+  max-width: 160px;
+}
+
 .resultsTable tbody tr {
   background: #0f172a;
   border: 1px solid #334155;
@@ -207,19 +225,11 @@
   opacity: 0.6;
 }
 
-.pdfStatus {
-  margin-top: 4px;
-  font-size: 12px;
-}
-
-.textXs {
-  font-size: 12px;
-}
-
 @media (max-width: 960px) {
   .topbar {
     flex-direction: column;
     gap: 16px;
+    padding-right: 0;
   }
 
   .main {
@@ -232,7 +242,9 @@
   }
 
   .demoBadge {
-    align-self: flex-start;
+    position: static;
+    margin-top: 4px;
+    margin-left: auto;
   }
 
   .cardActions {
