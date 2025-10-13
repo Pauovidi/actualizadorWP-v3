@@ -22,28 +22,19 @@ permissions:
 
 jobs:
   preflight:
-    runs-on: self-hosted   # o ubuntu-latest si prefieres runners de GitHub
+    runs-on: ubuntu-latest   # usa runner de GitHub para simplificar
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Setup Node
-        uses: actions/setup-node@v4
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
         with:
           node-version: '20'
-          cache: npm
-
-      - name: Install deps (ci)
+          cache: 'npm'
+      - name: Install deps
         run: npm ci
-
-      - name: Build (Next.js)
+      - name: Build
         run: npm run build
-
-      # Smoke test básico sin levantar servidor:
-      #  - Garantiza que Next generó CSS y que las APIs se compilaron
       - name: Smoke test
-        run: node scripts/smoke.mjs
-
+        run: npm run smoke
       - name: Job summary
         run: |
           echo "## Preflight OK" >> $GITHUB_STEP_SUMMARY
