@@ -159,69 +159,69 @@ export default function Page() {
   };
 
   return (
-    <main className="max-w-6xl mx-auto p-6 text-slate-100">
-      <header className="mb-6 flex items-center justify-between">
-        <h1 className="text-4xl font-extrabold">Panel Actualizador WP</h1>
-        {DEMO && (
-          <span className="px-2 py-1 rounded bg-slate-700 text-xs">DEMO</span>
-        )}
+    <main className="main">
+      <header className="topbar">
+        <h1 className="title">Panel Actualizador WP</h1>
+        {DEMO && <span className="demo">DEMO</span>}
       </header>
 
       {/* Editor de sitios */}
-      <section className="mb-8 rounded-2xl bg-slate-900/60 p-5 shadow-lg border border-slate-800">
-        <div className="grid grid-cols-12 gap-3 items-center">
-          <div className="col-span-3 font-semibold">Nombre</div>
-          <div className="col-span-4 font-semibold">URL</div>
-          <div className="col-span-2 font-semibold">Token</div>
-          <div className="col-span-3 font-semibold">Email destino</div>
-
-          {sites.map((s, i) => (
-            <div className="contents" key={i}>
-              <input
-                className="col-span-3 input"
-                value={s.name}
-                onChange={(e) => updateSite(i, { name: e.target.value })}
-              />
-              <input
-                className="col-span-4 input"
-                value={s.url}
-                onChange={(e) => updateSite(i, { url: e.target.value })}
-              />
-              <input
-                className="col-span-2 input"
-                value={s.token ?? ''}
-                onChange={(e) => updateSite(i, { token: e.target.value })}
-              />
-              <div className="col-span-3 flex items-center gap-2">
-                <input
-                  type="email"
-                  className={`input flex-1 ${!s.email ? 'input-error' : ''}`}
-                  placeholder="cliente@dominio.com"
-                  value={s.email ?? ''}
-                  onChange={(e) => updateSite(i, { email: e.target.value })}
-                />
-                <button className="btn btn-ghost" onClick={() => removeSite(i)}>
-                  Eliminar
-                </button>
-              </div>
-            </div>
-          ))}
+      <section className="card card-stack">
+        <div className="grid-header">
+          <div>Nombre</div>
+          <div>URL</div>
+          <div>Token</div>
+          <div>Email destino</div>
         </div>
 
-        <div className="mt-4 flex gap-3">
-          <button className="btn btn-ghost" onClick={addSite}>Añadir sitio</button>
-          <button className="btn btn-primary" disabled={busy} onClick={() => sites.forEach((_, i) => doUpdate(i))}>
+        {sites.map((s, i) => (
+          <div className="site-row" key={i}>
+            <input
+              className="input"
+              value={s.name}
+              onChange={(e) => updateSite(i, { name: e.target.value })}
+            />
+            <input
+              className="input"
+              value={s.url}
+              onChange={(e) => updateSite(i, { url: e.target.value })}
+            />
+            <input
+              className="input"
+              value={s.token ?? ''}
+              onChange={(e) => updateSite(i, { token: e.target.value })}
+            />
+            <div className="email-cell">
+              <input
+                type="email"
+                className={`input ${!s.email ? 'input-error' : ''}`}
+                placeholder="cliente@dominio.com"
+                value={s.email ?? ''}
+                onChange={(e) => updateSite(i, { email: e.target.value })}
+              />
+              <button className="btn btn-ghost" onClick={() => removeSite(i)}>
+                Eliminar
+              </button>
+            </div>
+          </div>
+        ))}
+
+        <div className="card-actions">
+          <button className="btn btn-ghost" onClick={addSite}>
+            Añadir sitio
+          </button>
+          <button className="btn btn-primary" disabled={busy} onClick={() => sites.forEach((_, idx) => doUpdate(idx))}>
             {busy ? 'Actualizando…' : 'Actualizar Todo'}
           </button>
         </div>
       </section>
 
       {/* Resultados */}
-      <section className="rounded-2xl bg-slate-900/60 p-5 shadow-lg border border-slate-800">
-        <h2 className="text-2xl font-bold mb-4">Resultados</h2>
+      <section className="card card-stack">
+        <h2 className="section-title">Resultados</h2>
 
-        <div className="overflow-x-auto">
-          <table className="results-table w-full">
+        <div className="results-wrapper">
+          <table className="results-table">
             <thead>
               <tr>
                 <th>Sitio</th>
@@ -262,7 +262,7 @@ export default function Page() {
                           }}
                         />
                       </label>
-                      {s.invoiceUrl && <div className="text-xs mt-1">✓ PDF listo</div>}
+                      {s.invoiceUrl && <div className="text-xs pdf-status">✓ PDF listo</div>}
                     </td>
                     <td>
                       <button className="btn btn-outline" disabled={!s.invoiceUrl} onClick={() => sendOne(i)}>
@@ -276,7 +276,7 @@ export default function Page() {
           </table>
         </div>
 
-        <div className="mt-4 flex justify-end">
+        <div className="card-actions card-actions--end">
           <button className="btn btn-primary" onClick={sendAll}>Enviar todos</button>
         </div>
       </section>
