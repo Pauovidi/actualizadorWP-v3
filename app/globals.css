@@ -4,11 +4,17 @@ html,body{ margin:0; font-family: system-ui,-apple-system,Segoe UI,Roboto,Inter,
 body{ background:var(--bg); color:var(--fg); }
 .container{ max-width: 1100px; margin: 32px auto; padding: 0 16px; }
 .card{ background:var(--card); border:1px solid var(--line); border-radius:16px; padding:16px; }
-.input{ width:100%; padding:10px 12px; border-radius:10px; border:1px solid var(--line); background:#0f172a; color:var(--fg); }
+.input{ width:100%; padding:10px 12px; border-radius:10px; border:1px solid var(--line); background:#0f172a; color:var(--fg); transition:border-color .2s ease, box-shadow .2s ease; }
+.input:focus{ border-color:#22d3ee; outline:none; box-shadow:0 0 0 3px rgba(34,211,238,.2); }
+.input-error{ border-color:#ef4444; }
 .row{ display:grid; grid-template-columns: 1fr 1.2fr 1.2fr 1.2fr auto; gap:10px; }
 .row + .row{ margin-top:10px; }
-.btn{ padding:12px 16px; border-radius:12px; border:1px solid var(--line); background:#0f172a; color:var(--fg); cursor:pointer; }
-.btn.primary{ background:#06b6d4; color:black; font-weight:700; }
+.btn{ padding:12px 16px; border-radius:12px; border:1px solid transparent; background:#0f172a; color:var(--fg); cursor:pointer; transition:background .2s ease, border-color .2s ease, color .2s ease; }
+.btn-primary{ background:#06b6d4; color:#0b1220; font-weight:700; }
+.btn-secondary{ background:#0f172a; border-color:#334155; }
+.btn-outline{ background:transparent; border-color:#334155; }
+.btn-ghost{ background:#0f172a; border-color:#334155; }
+.btn:disabled{ opacity:.6; cursor:not-allowed; }
 .small{ font-size:12px; color:var(--muted); }
 .table{ width:100%; border-collapse: collapse; margin-top:12px; }
 .table th, .table td{ padding:10px; border-top:1px solid var(--line); }
@@ -17,3 +23,9 @@ body{ background:var(--bg); color:var(--fg); }
 .right{ display:flex; gap:8px; align-items:center; }
 .demo{ padding:2px 6px; border-radius:999px; border:1px solid var(--line); background:#1f2937; font-size:12px; }
 .footerRow{ display:flex; justify-content:flex-end; margin-top:12px; }
+.results-table{ border-collapse:separate; border-spacing:0 10px; width:100%; }
+.results-table th,
+.results-table td{ padding:12px 16px; text-align:center; vertical-align:middle; }
+.results-table tbody tr{ background:#0f172a; border:1px solid #334155; }
+.muted{ opacity:.6; }
+.hidden{ display:none; }

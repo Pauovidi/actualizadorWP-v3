@@ -280,41 +280,6 @@ export default function Page() {
           <button className="btn btn-primary" onClick={sendAll}>Enviar todos</button>
         </div>
       </section>
-
-      <style jsx global>{`
-        .input {
-          background: #0f172a;
-          border: 1px solid #334155;
-          border-radius: 12px;
-          padding: 10px 12px;
-          color: #e2e8f0;
-          outline: none;
-        }
-        .input:focus { border-color: #22d3ee; }
-        .input-error { border-color: #ef4444; }
-
-        .btn {
-          border-radius: 12px;
-          padding: 8px 14px;
-          border: 1px solid transparent;
-        }
-        .btn-primary { background:#06b6d4; color:#0b1220; }
-        .btn-secondary { background:#0f172a; border-color:#334155; }
-        .btn-outline { background:transparent; border-color:#334155; }
-        .btn-ghost { background:#0f172a; border-color:#334155; }
-
-        .results-table { border-collapse: separate; border-spacing: 0 10px; }
-        .results-table th, .results-table td {
-          padding: 12px 16px;
-          text-align: center;            /* Alineación pedida */
-          vertical-align: middle;        /* Centrado vertical */
-        }
-        .results-table tbody tr {
-          background: #0f172a;
-          border: 1px solid #334155;
-        }
-        .muted { opacity: .6; }
-      `}</style>
     </main>
   );
 }
