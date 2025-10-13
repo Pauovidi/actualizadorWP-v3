@@ -136,6 +136,7 @@ export default function Page() {
             errors: [errorMessage],
             reportHtml: undefined,
             reportFileName: undefined,
+            at: new Date().toISOString(),
           },
         });
         alert(`Actualizado ${site.name}: con incidencias ("${errorMessage}")`);
