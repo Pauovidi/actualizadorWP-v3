@@ -2,7 +2,7 @@
 import "./globals.css"; // 👈 imprescindible
 
 export const metadata = {
-  title: "Panel Actualizador WP",
+  title: "Panel Actualizador multiWP",
   description: "Gestor de actualizaciones multi-WordPress",
 };
 
