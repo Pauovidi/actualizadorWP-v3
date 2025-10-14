@@ -1,40 +1,49 @@
 import { NextResponse } from "next/server";
 import nodemailer from "nodemailer";
 
-import { smtp } from "@/lib/env";
+export const runtime = "nodejs";
 
 export async function POST(req: Request) {
   try {
     const { to, subject, html, attachments = [] } = await req.json();
 
-    if (!smtp.host || !smtp.port || !smtp.auth.user || !smtp.auth.pass) {
-      throw new Error(
-        "Configura MAIL_HOST, MAIL_PORT, MAIL_USER y MAIL_PASS en Vercel."
+    let recipients: string | undefined = undefined;
+    if (Array.isArray(to)) recipients = to.filter(Boolean).join(", ");
+    else if (typeof to === "string") recipients = to.trim();
+
+    if (!recipients) {
+      return NextResponse.json(
+        { ok: false, error: 'Missing "to" email' },
+        { status: 400 }
       );
     }
 
+    const secure =
+      process.env.MAIL_SECURE === "1" ||
+      process.env.MAIL_PORT === "465";
+
     const transporter = nodemailer.createTransport({
-      host: smtp.host,
-      port: smtp.port,
-      secure: false,
-      auth: smtp.auth,
+      host: process.env.MAIL_HOST!,
+      port: Number(process.env.MAIL_PORT || 587),
+      secure,
+      auth: { user: process.env.MAIL_USER!, pass: process.env.MAIL_PASS! },
     });
 
     const info = await transporter.sendMail({
-      from: smtp.from,
-      to,
+      from: process.env.MAIL_FROM!,
+      to: recipients,
       subject: subject || "Informe DEMO",
       html: html || "<p>Informe DEMO adjunto.</p>",
-      attachments: attachments.map((attachment: any) => ({
-        filename: attachment.filename,
-        path: attachment.url,
+      attachments: attachments.map((a: any) => ({
+        filename: a.filename,
+        path: a.url,
       })),
     });
 
     return NextResponse.json({ ok: true, id: info.messageId });
   } catch (e: any) {
     return NextResponse.json(
-      { ok: false, error: e?.message },
+      { ok: false, error: e?.message || String(e) },
       { status: 500 }
     );
   }

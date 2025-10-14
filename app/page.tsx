@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useState } from 'react';
 import type { ChangeEvent } from 'react';
 import dayjs from 'dayjs';
 
@@ -82,8 +82,6 @@ export default function Page() {
   useEffect(() => {
     localStorage.setItem('awp_sites_v33', JSON.stringify(sites));
   }, [sites]);
-
-  const today = useMemo(() => dayjs().format('DD/MM/YYYY'), []);
 
   const addSite = () =>
     setSites(s => [
@@ -302,63 +300,77 @@ export default function Page() {
     );
   };
 
-  const sendOne = async (i: number, manageBusy = true) => {
-    const site = sites[i];
-    if (!site) return;
+  const toDataUrl = async (source: string) => {
+    if (source.startsWith('data:')) return source;
+    const response = await fetch(source);
+    const blob = await response.blob();
+    const buffer = await blob.arrayBuffer();
+    const base64 = arrayBufferToBase64(buffer);
+    const mime = blob.type || 'application/pdf';
+    return `data:${mime};base64,${base64}`;
+  };
 
-    if (!site.invoiceUrl) {
-      alert(`Falta factura PDF en ${site.name}`);
+  const sendEmail = async (row: Site, index: number, manageBusy = true) => {
+    const siteName = row.name || 'sitio';
+    const to = (row.email ?? '').trim();
+    if (!to) {
+      alert("Falta 'Email destino'");
       return;
     }
 
     try {
       if (manageBusy) setBusy(true);
-      updateSite(i, { lastSend: null });
-      // obtenemos el PDF como blob para adjuntarlo
-      const pdfBlob = await (await fetch(site.invoiceUrl)).blob();
-      const pdfBuffer = await pdfBlob.arrayBuffer();
-      const pdfBase64 = arrayBufferToBase64(pdfBuffer);
+      updateSite(index, { lastSend: null });
+
+      let attachments: { filename: string; url: string }[] = [];
+      if (row.invoiceUrl) {
+        try {
+          const invoiceUrl = await toDataUrl(row.invoiceUrl);
+          attachments = [
+            {
+              filename: row.invoiceFileName || 'factura.pdf',
+              url: invoiceUrl,
+            },
+          ];
+        } catch (invoiceError) {
+          throw new Error(`No se pudo leer la factura PDF (${invoiceError})`);
+        }
+      }
 
       const res = await fetch('/api/send', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          site: {
-            name: site.name,
-            url: normalizeUrl(site.url),
-            email: site.email, // <- por sitio
-          },
-          reportHtml: site.lastResult?.reportHtml || null,
-          reportFileName: site.lastResult?.reportFileName || 'informe.html',
-          invoice: {
-            fileName:
-              site.invoiceFileName ||
-              `factura-${dayjs().format('YYYYMMDD')}.pdf`,
-            base64: pdfBase64,
-          },
-          subject: `Informe y factura — ${site.name} (${today})`,
+          to,
+          subject: `Informe ${siteName}`,
+          html: '<p>Informe DEMO adjunto.</p>',
+          attachments,
         }),
       });
 
-      const json = await res.json();
-      if (!json.ok) throw new Error(json.error || 'Fallo desconocido');
-      updateSite(i, {
+      const data = await res.json().catch(() => null);
+      if (!res.ok || !data?.ok) {
+        throw new Error(data?.error || `${res.status} ${res.statusText}`);
+      }
+
+      const via = data?.id ? `SMTP · ${data.id}` : 'SMTP';
+      updateSite(index, {
         lastSend: {
           status: 'OK',
-          via: json.via,
+          via,
           at: new Date().toISOString(),
         },
       });
-      alert(`Enviado ${site.name}: OK`);
+      alert(`Enviado ${siteName}: OK`);
     } catch (e: any) {
-      updateSite(i, {
+      updateSite(index, {
         lastSend: {
           status: 'ERROR',
           error: String(e?.message || e),
           at: new Date().toISOString(),
         },
       });
-      alert(`Error enviando ${site.name}: "${String(e?.message || e)}"`);
+      alert(`Error enviando ${siteName}: "${String(e?.message || e)}"`);
     } finally {
       if (manageBusy) setBusy(false);
     }
@@ -367,10 +379,15 @@ export default function Page() {
   const sendAll = async () => {
     setBusy(true);
     for (let i = 0; i < sites.length; i++) {
-      const s = sites[i];
-      if (!s.invoiceUrl) continue; // respeta regla: solo envía con factura
+      const row = sites[i];
+      if (!row) continue;
+      const to = (row.email ?? '').trim();
+      if (!to) {
+        alert(`Falta 'Email destino' en ${row.name || `sitio ${i + 1}`}`);
+        continue;
+      }
       // eslint-disable-next-line no-await-in-loop
-      await sendOne(i, false);
+      await sendEmail(row, i, false);
     }
     setBusy(false);
   };
@@ -379,7 +396,6 @@ export default function Page() {
     <main className="main">
       <header className="topbar">
         <h1 className="title">Panel Actualizador WP</h1>
-        {DEMO && <span className="demo">DEMO</span>}
       </header>
 
       {/* Editor de sitios */}
@@ -528,8 +544,8 @@ export default function Page() {
                     <td>
                       <button
                         className={`${styles.btn} ${styles.btnOutline}`}
-                        disabled={busy || !s.invoiceUrl}
-                        onClick={() => sendOne(i)}
+                        disabled={busy}
+                        onClick={() => sendEmail(s, i)}
                       >
                         Enviar email
                       </button>
