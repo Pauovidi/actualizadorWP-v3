@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 
+// Fuerza runtime Node (no Edge) para que lea process.env bien
 export const runtime = "nodejs";
 
 export async function GET() {
