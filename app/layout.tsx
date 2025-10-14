@@ -1,14 +1,20 @@
-import './globals.css';
+import "./globals.css";
+import type { Metadata } from "next";
 
-export const metadata = {
-  title: 'Actualitzador WP — Dashboard',
-  description: 'Actualizar sitios WP y descargar informes',
+import { isDemo } from "@/lib/env";
+import DemoBadge from "@/components/DemoBadge";
+
+export const metadata: Metadata = {
+  title: "Panel Actualizador WP",
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
     <html lang="es">
-      <body>{children}</body>
+      <body>
+        {isDemo ? <DemoBadge /> : null}
+        {children}
+      </body>
     </html>
   );
 }

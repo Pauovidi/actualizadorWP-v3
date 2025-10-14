@@ -11,7 +11,7 @@ type Site = {
   token?: string;
   email?: string;      // email destino (por sitio)
   invoiceUrl?: string; // blob o url pública PDF
-  invoiceName?: string;
+  invoiceFileName?: string;
   lastResult?: UpdateResult | null;
   lastSend?: SendResult | null;
 };
@@ -31,7 +31,9 @@ type SendResult = {
   at: string;
 };
 
-const DEMO = process.env.NEXT_PUBLIC_DEMO === '1';
+const DEMO =
+  process.env.NEXT_PUBLIC_MODE === 'demo' ||
+  process.env.NEXT_PUBLIC_DEMO === '1';
 
 const arrayBufferToBase64 = (buffer: ArrayBuffer) => {
   const globalBuffer = (globalThis as unknown as {
@@ -113,11 +115,16 @@ export default function Page() {
     try {
       const res = await fetch('/api/update', {
         method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          url: normalizeUrl(site.url),
-          token: site.token ?? '',
-          screenshot: process.env.NEXT_PUBLIC_SCREENSHOT_ENABLED === '1',
-          demo: process.env.NEXT_PUBLIC_DEMO === '1',
+          sites: [
+            {
+              name: site.name,
+              url: normalizeUrl(site.url),
+              token: site.token ?? '',
+              email: site.email ?? '',
+            },
+          ],
         }),
       });
       let json: any = null;
@@ -140,6 +147,44 @@ export default function Page() {
           },
         });
         alert(`Actualizado ${site.name}: con incidencias ("${errorMessage}")`);
+        return;
+      }
+
+      const results = Array.isArray(json?.results) ? json.results : null;
+      if (results?.length) {
+        const result = results[0] ?? {};
+        const rawStatus = String(result?.status || '').toLowerCase();
+        let normalizedStatus: UpdateResult['status'] = 'WARN';
+        if (rawStatus === 'ok') normalizedStatus = 'OK';
+        else if (rawStatus === 'ok_with_notes' || rawStatus === 'warn') normalizedStatus = 'WARN';
+        else if (rawStatus === 'error' || rawStatus === 'err') normalizedStatus = 'ERROR';
+
+        const errorsList: string[] = [];
+        if (Array.isArray(result?.errors)) {
+          errorsList.push(...result.errors.map((err: unknown) => String(err)));
+        } else if (typeof result?.errors === 'number' && result.errors > 0) {
+          errorsList.push(`Errores detectados: ${result.errors}`);
+        } else if (result?.errors) {
+          errorsList.push(String(result.errors));
+        }
+        if (result?.message) {
+          errorsList.push(String(result.message));
+        }
+
+        const reportUrl: string | undefined =
+          typeof result?.reportUrl === 'string' ? result.reportUrl : undefined;
+        const reportFileName = reportUrl?.split('/').pop();
+
+        updateSite(i, {
+          lastResult: {
+            status: normalizedStatus,
+            errors: errorsList,
+            reportHtml: reportUrl,
+            reportFileName: reportFileName || 'informe-demo.pdf',
+            at: new Date().toISOString(),
+          },
+        });
+        alert(`Actualizado ${site.name}: ${normalizedStatus}`);
         return;
       }
 
@@ -225,7 +270,12 @@ export default function Page() {
         if (site.invoiceUrl) {
           URL.revokeObjectURL(site.invoiceUrl);
         }
-        return { ...site, invoiceUrl: blobUrl, invoiceName: file.name, lastSend: null };
+        return {
+          ...site,
+          invoiceUrl: blobUrl,
+          invoiceFileName: file.name,
+          lastSend: null,
+        };
       })
     );
   };
@@ -259,7 +309,9 @@ export default function Page() {
           reportHtml: site.lastResult?.reportHtml || null,
           reportFileName: site.lastResult?.reportFileName || 'informe.html',
           invoice: {
-            fileName: site.invoiceName || `factura-${dayjs().format('YYYYMMDD')}.pdf`,
+            fileName:
+              site.invoiceFileName ||
+              `factura-${dayjs().format('YYYYMMDD')}.pdf`,
             base64: pdfBase64,
           },
           subject: `Informe y factura — ${site.name} (${today})`,
@@ -442,7 +494,14 @@ export default function Page() {
                           }}
                         />
                       </label>
-                      {s.invoiceUrl && <div className="text-xs pdf-status">✓ PDF listo</div>}
+                      {s.invoiceUrl && (
+                        <>
+                          <div className="text-xs pdf-status">✓ PDF listo</div>
+                          {s.invoiceFileName ? (
+                            <div className={styles.fileName}>{s.invoiceFileName}</div>
+                          ) : null}
+                        </>
+                      )}
                     </td>
                     <td>
                       <button
