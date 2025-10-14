@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useMemo, useState } from 'react';
+import type { ChangeEvent } from 'react';
 import dayjs from 'dayjs';
 
 import styles from './page.module.css';
@@ -11,7 +12,7 @@ type Site = {
   token?: string;
   email?: string;      // email destino (por sitio)
   invoiceUrl?: string; // blob o url pública PDF
-  invoiceFileName?: string;
+  invoiceFileName?: string | null;
   lastResult?: UpdateResult | null;
   lastSend?: SendResult | null;
 };
@@ -68,7 +69,15 @@ export default function Page() {
     const raw =
       localStorage.getItem('awp_sites_v33') ||
       localStorage.getItem('awp_sites_v32');
-    if (raw) setSites(JSON.parse(raw));
+    if (raw) {
+      const parsed: Site[] = JSON.parse(raw);
+      setSites(
+        parsed.map((site) => ({
+          ...site,
+          invoiceFileName: site.invoiceFileName ?? null,
+        }))
+      );
+    }
   }, []);
   useEffect(() => {
     localStorage.setItem('awp_sites_v33', JSON.stringify(sites));
@@ -84,6 +93,7 @@ export default function Page() {
         url: 'https://',
         token: DEMO ? `demo-${Math.random().toString(36).slice(2, 8)}` : '',
         email: '',
+        invoiceFileName: null,
       },
     ]);
 
@@ -262,14 +272,26 @@ export default function Page() {
     a.remove();
   };
 
-  const uploadInvoice = async (i: number, file: File) => {
-    const blobUrl = URL.createObjectURL(file);
+  const onPickInvoice = (idx: number) => (e: ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0] ?? null;
     setSites((current) =>
-      current.map((site, idx) => {
-        if (idx !== i) return site;
+      current.map((site, i) => {
+        if (i !== idx) return site;
+
         if (site.invoiceUrl) {
           URL.revokeObjectURL(site.invoiceUrl);
         }
+
+        if (!file) {
+          return {
+            ...site,
+            invoiceUrl: undefined,
+            invoiceFileName: null,
+            lastSend: null,
+          };
+        }
+
+        const blobUrl = URL.createObjectURL(file);
         return {
           ...site,
           invoiceUrl: blobUrl,
@@ -482,26 +504,26 @@ export default function Page() {
                       )}
                     </td>
                     <td className={styles.alignLeft}>
-                      <label className={`${styles.btn} ${styles.btnGhost}`}>
-                        Cargar factura PDF
-                        <input
-                          className={styles.fileInput}
-                          type="file"
-                          accept="application/pdf"
-                          onChange={(e) => {
-                            const f = e.target.files?.[0];
-                            if (f) uploadInvoice(i, f);
-                          }}
-                        />
-                      </label>
-                      {s.invoiceUrl && (
-                        <>
-                          <div className="text-xs pdf-status">✓ PDF listo</div>
+                      <div className={styles.invoiceCell}>
+                        <label className={`${styles.btn} ${styles.btnGhost}`}>
+                          Cargar factura PDF
+                          <input
+                            className={styles.fileInput}
+                            type="file"
+                            accept="application/pdf"
+                            onChange={onPickInvoice(i)}
+                          />
+                        </label>
+                        <p className={styles.fileName}>
                           {s.invoiceFileName ? (
-                            <div className={styles.fileName}>{s.invoiceFileName}</div>
-                          ) : null}
-                        </>
-                      )}
+                            s.invoiceFileName
+                          ) : (
+                            <span className={styles.muted}>
+                              <em>Ningún archivo seleccionado</em>
+                            </span>
+                          )}
+                        </p>
+                      </div>
                     </td>
                     <td>
                       <button

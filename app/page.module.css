@@ -98,6 +98,13 @@
   align-items: center;
 }
 
+.invoiceCell {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 6px;
+}
+
 .input {
   width: 100%;
   padding: 10px 12px;
@@ -345,6 +352,10 @@
 
   .emailCell {
     flex-direction: column;
+    align-items: stretch;
+  }
+
+  .invoiceCell {
     align-items: stretch;
   }
 
