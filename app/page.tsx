@@ -11,8 +11,9 @@ type Site = {
   url: string;         // normalizada
   token?: string;
   email?: string;      // email destino (por sitio)
-  invoiceUrl?: string; // blob o url pública PDF
+  destEmail?: string;  // compatibilidad con versiones anteriores
   invoiceFileName?: string | null;
+  invoiceFileBase64?: string | null;
   lastResult?: UpdateResult | null;
   lastSend?: SendResult | null;
 };
@@ -20,7 +21,7 @@ type Site = {
 type UpdateResult = {
   status: 'OK' | 'ERROR' | 'WARN';
   errors?: string[];
-  reportHtml?: string;         // base64 data URL para descarga
+  reportUrl?: string;
   reportFileName?: string;     // sugerencia de nombre
   at: string;                  // ISO date
 };
@@ -38,7 +39,11 @@ const DEMO =
 
 const arrayBufferToBase64 = (buffer: ArrayBuffer) => {
   const globalBuffer = (globalThis as unknown as {
-    Buffer?: { from(data: ArrayBuffer): { toString(encoding: string): string } };
+    Buffer?: {
+      from(data: ArrayBuffer | string, encoding?: string): {
+        toString(encoding: string): string;
+      };
+    };
   }).Buffer;
 
   if (globalBuffer?.from) {
@@ -75,6 +80,7 @@ export default function Page() {
         parsed.map((site) => ({
           ...site,
           invoiceFileName: site.invoiceFileName ?? null,
+          invoiceFileBase64: site.invoiceFileBase64 ?? null,
         }))
       );
     }
@@ -92,17 +98,12 @@ export default function Page() {
         token: DEMO ? `demo-${Math.random().toString(36).slice(2, 8)}` : '',
         email: '',
         invoiceFileName: null,
+        invoiceFileBase64: null,
       },
     ]);
 
   const removeSite = (i: number) =>
-    setSites((current) => {
-      const target = current[i];
-      if (target?.invoiceUrl) {
-        URL.revokeObjectURL(target.invoiceUrl);
-      }
-      return current.filter((_, idx) => idx !== i);
-    });
+    setSites((current) => current.filter((_, idx) => idx !== i));
 
   const updateSite = (i: number, patch: Partial<Site>) =>
     setSites(s => s.map((site, idx) => (idx === i ? { ...site, ...patch } : site)));
@@ -149,7 +150,7 @@ export default function Page() {
           lastResult: {
             status: 'ERROR',
             errors: [errorMessage],
-            reportHtml: undefined,
+            reportUrl: undefined,
             reportFileName: undefined,
             at: new Date().toISOString(),
           },
@@ -187,8 +188,8 @@ export default function Page() {
           lastResult: {
             status: normalizedStatus,
             errors: errorsList,
-            reportHtml: reportUrl,
-            reportFileName: reportFileName || 'informe-demo.pdf',
+            reportUrl,
+            reportFileName: reportFileName || 'informe-demo.html',
             at: new Date().toISOString(),
           },
         });
@@ -211,21 +212,35 @@ export default function Page() {
         payload?.report?.base64 ||
         payload?.report;
 
-      let reportDataUrl: string | undefined;
-      if (typeof reportHtmlRaw === 'string') {
+      let reportLink: string | undefined =
+        typeof payload?.reportUrl === 'string' ? payload.reportUrl : undefined;
+      if (!reportLink && typeof reportHtmlRaw === 'string') {
         if (reportHtmlRaw.startsWith('data:')) {
-          reportDataUrl = reportHtmlRaw;
+          reportLink = reportHtmlRaw;
         } else if (/[<>]/.test(reportHtmlRaw)) {
-          if (typeof TextEncoder !== 'undefined') {
-            reportDataUrl = `data:text/html;base64,${arrayBufferToBase64(
-              new TextEncoder().encode(reportHtmlRaw).buffer
-            )}`;
-          } else {
-            const bytes = new Uint8Array([...reportHtmlRaw].map((c) => c.charCodeAt(0)));
-            reportDataUrl = `data:text/html;base64,${arrayBufferToBase64(bytes.buffer)}`;
+          try {
+            if (typeof TextEncoder !== 'undefined') {
+              const buffer = new TextEncoder().encode(reportHtmlRaw).buffer;
+              reportLink = `data:text/html;base64,${arrayBufferToBase64(buffer)}`;
+            } else {
+              const globalBuffer = (globalThis as unknown as {
+                Buffer?: {
+                  from(data: string, encoding?: string): {
+                    toString(encoding: string): string;
+                  };
+                };
+              }).Buffer;
+              if (globalBuffer?.from) {
+                reportLink = `data:text/html;base64,${globalBuffer
+                  .from(reportHtmlRaw, 'utf-8')
+                  .toString('base64')}`;
+              }
+            }
+          } catch {
+            reportLink = undefined;
           }
         } else {
-          reportDataUrl = `data:text/html;base64,${reportHtmlRaw}`;
+          reportLink = `data:text/html;base64,${reportHtmlRaw}`;
         }
       }
 
@@ -238,7 +253,7 @@ export default function Page() {
         lastResult: {
           status: payload?.status ?? 'OK',
           errors: normalizedErrors,
-          reportHtml: reportDataUrl,
+          reportUrl: reportLink,
           reportFileName: fileName,
           at: new Date().toISOString(),
         },
@@ -249,7 +264,7 @@ export default function Page() {
         lastResult: {
           status: 'ERROR',
           errors: [String(e)],
-          reportHtml: undefined,
+          reportUrl: undefined,
           reportFileName: undefined,
           at: new Date().toISOString(),
         },
@@ -260,59 +275,71 @@ export default function Page() {
     }
   };
 
-  const downloadReport = (r?: UpdateResult | null) => {
-    if (!r?.reportHtml) return;
-    const a = document.createElement('a');
-    a.href = r.reportHtml;
-    a.download = r.reportFileName || 'informe.html';
-    document.body.appendChild(a);
-    a.click();
-    a.remove();
-  };
+  const onPickInvoice = (idx: number) => async (e: ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) {
+      setSites((current) =>
+        current.map((site, i) =>
+          i === idx
+            ? {
+                ...site,
+                invoiceFileName: null,
+                invoiceFileBase64: null,
+                lastSend: null,
+              }
+            : site
+        )
+      );
+      e.target.value = '';
+      return;
+    }
 
-  const onPickInvoice = (idx: number) => (e: ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0] ?? null;
+    const base64 = await new Promise<string>((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => {
+        const result = typeof reader.result === 'string' ? reader.result : '';
+        const [, content] = result.split(',');
+        resolve(content || '');
+      };
+      reader.onerror = () => reject(reader.error);
+      reader.readAsDataURL(file);
+    });
+
     setSites((current) =>
-      current.map((site, i) => {
-        if (i !== idx) return site;
-
-        if (site.invoiceUrl) {
-          URL.revokeObjectURL(site.invoiceUrl);
-        }
-
-        if (!file) {
-          return {
-            ...site,
-            invoiceUrl: undefined,
-            invoiceFileName: null,
-            lastSend: null,
-          };
-        }
-
-        const blobUrl = URL.createObjectURL(file);
-        return {
-          ...site,
-          invoiceUrl: blobUrl,
-          invoiceFileName: file.name,
-          lastSend: null,
-        };
-      })
+      current.map((site, i) =>
+        i === idx
+          ? {
+              ...site,
+              invoiceFileName: file.name,
+              invoiceFileBase64: base64,
+              lastSend: null,
+            }
+          : site
+      )
     );
+    e.target.value = '';
   };
 
-  const toDataUrl = async (source: string) => {
-    if (source.startsWith('data:')) return source;
-    const response = await fetch(source);
-    const blob = await response.blob();
-    const buffer = await blob.arrayBuffer();
-    const base64 = arrayBufferToBase64(buffer);
-    const mime = blob.type || 'application/pdf';
-    return `data:${mime};base64,${base64}`;
+  const renderReportLink = (r?: UpdateResult | null) => {
+    if (!r?.reportUrl) {
+      return <span className={styles.muted}>—</span>;
+    }
+
+    return (
+      <a
+        className={`${styles.btn} ${styles.btnSecondary}`}
+        href={r.reportUrl}
+        target="_blank"
+        rel="noopener noreferrer"
+      >
+        Ver HTML
+      </a>
+    );
   };
 
   const sendEmail = async (row: Site, index: number, manageBusy = true) => {
     const siteName = row.name || 'sitio';
-    const to = (row.email ?? '').trim();
+    const to = (row.email || row.destEmail || '').trim();
     if (!to) {
       alert("Falta 'Email destino'");
       return;
@@ -322,19 +349,18 @@ export default function Page() {
       if (manageBusy) setBusy(true);
       updateSite(index, { lastSend: null });
 
-      let attachments: { filename: string; url: string }[] = [];
-      if (row.invoiceUrl) {
-        try {
-          const invoiceUrl = await toDataUrl(row.invoiceUrl);
-          attachments = [
+      const attachments = row.invoiceFileBase64
+        ? [
             {
               filename: row.invoiceFileName || 'factura.pdf',
-              url: invoiceUrl,
+              contentBase64: row.invoiceFileBase64,
+              contentType: 'application/pdf',
             },
-          ];
-        } catch (invoiceError) {
-          throw new Error(`No se pudo leer la factura PDF (${invoiceError})`);
-        }
+          ]
+        : [];
+
+      if (row.invoiceFileBase64 && !row.invoiceFileBase64.length) {
+        throw new Error('La factura seleccionada está vacía o no se pudo leer.');
       }
 
       const res = await fetch('/api/send', {
@@ -381,7 +407,7 @@ export default function Page() {
     for (let i = 0; i < sites.length; i++) {
       const row = sites[i];
       if (!row) continue;
-      const to = (row.email ?? '').trim();
+      const to = (row.email || row.destEmail || '').trim();
       if (!to) {
         alert(`Falta 'Email destino' en ${row.name || `sitio ${i + 1}`}`);
         continue;
@@ -495,15 +521,7 @@ export default function Page() {
                         <span className={styles.muted}>—</span>
                       )}
                     </td>
-                    <td>
-                      {r?.reportHtml ? (
-                        <button className={`${styles.btn} ${styles.btnSecondary}`} onClick={() => downloadReport(r)}>
-                          Descargar HTML
-                        </button>
-                      ) : (
-                        <span className={styles.muted}>—</span>
-                      )}
-                    </td>
+                    <td>{renderReportLink(r)}</td>
                     <td className={styles.alignLeft}>
                       {s.lastSend ? (
                         <div className={styles.sendStatus} data-status={s.lastSend.status}>

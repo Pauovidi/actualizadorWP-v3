@@ -18,7 +18,7 @@ export async function POST(req: Request) {
         site: site.name || "Sitio",
         status: "ok_with_notes",
         errors: 0,
-        reportUrl: "/demo/sample-report.pdf",
+        reportUrl: "/demo/sample-report.html",
         invoiceUrl: null,
         message: "DEMO: generado informe ficticio",
         lastSentAt: null,
