@@ -20,6 +20,8 @@
     .card{background:var(--card);border:1px solid var(--line);border-radius:var(--radius);padding:16px;box-shadow:var(--shadow)}
     .meta{display:grid;grid-template-columns:1fr 1fr;gap:12px}
     .meta div{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:10px}
+    .brand-right{display:flex;justify-content:flex-end;margin-top:14px}
+    .brand-right img{max-height:42px;opacity:.95}
     .status{display:inline-flex;align-items:center;gap:8px;font-weight:700}
     .dot{width:10px;height:10px;border-radius:50%}
     .ok .dot{background:var(--ok)} .warn .dot{background:var(--warn)} .err .dot{background:var(--err)}
@@ -117,6 +119,9 @@
           <div><div class="small">WP</div><div>{{wpVersion}}</div></div>
           <div><div class="small">Base de datos</div><div>{{dbVersion}}</div></div>
           <div><div class="small">Entorno</div><div>{{environment}}</div></div>
+        </div>
+        <div class="brand-right">
+          <img src="/devestial_logo.png" alt="Devestial">
         </div>
       </aside>
     </div>

@@ -11,6 +11,24 @@ function getBaseUrl(req: Request) {
   return "";
 }
 
+async function getLogoCidAttachment(req: Request) {
+  const src = new URL("/devestial_logo.png", getBaseUrl(req)).toString();
+  try {
+    const r = await fetch(src);
+    if (!r.ok) return null;
+    const buf = Buffer.from(await r.arrayBuffer());
+    const ct = r.headers.get("content-type") || "image/png";
+    return {
+      filename: "devestial_logo.png",
+      content: buf,
+      contentType: ct,
+      cid: "devestial-logo",
+    };
+  } catch {
+    return null;
+  }
+}
+
 function toAbs(reportUrl: string | null, req: Request) {
   try {
     if (!reportUrl) return null;
@@ -91,12 +109,17 @@ export async function POST(req: Request) {
     const intro =
       html ||
       'Hola. <br>Adjunto el informe de actualización de tu web, así como la fca. correspondiente a este mes. <br>Un saludo.';
+    const logoCid = await getLogoCidAttachment(req);
+    if (logoCid) nmAttachments.push(logoCid);
+
     const htmlBody =
       intro +
       (abs
         ? `<p><a href="${abs}">Abrir informe en el navegador</a></p>`
         : "") +
-      (reportHtml ? `<hr>${reportHtml}` : "");
+      `<div style="margin-top:12px">
+     <img src="cid:devestial-logo" alt="Devestial" style="height:40px;display:block;opacity:.95">
+   </div>`;
 
     const info = await transporter.sendMail({
       from: process.env.MAIL_FROM!,

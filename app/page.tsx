@@ -333,7 +333,7 @@ export default function Page() {
         target="_blank"
         rel="noopener noreferrer"
       >
-        HTML
+        Ver informe
       </a>
     );
   };
