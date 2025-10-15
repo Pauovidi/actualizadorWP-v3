@@ -28,10 +28,36 @@ body{ background:var(--bg); color:var(--fg); }
 .small{ font-size:12px; color:var(--muted); }
 .badge{ display:inline-block; padding:2px 6px; border-radius:999px; border:1px solid var(--line); font-size:12px; }
 .topbar{ display:flex; align-items:center; justify-content:space-between; gap:12px; }
-.demo{ padding:4px 10px; border-radius:999px; border:1px solid var(--line); background:#1f2937; font-size:12px; font-weight:600; letter-spacing:.06em; }
 .results-table{ border-collapse:separate; border-spacing:0 10px; width:100%; }
 .results-table th,
 .results-table td{ padding:12px 16px; text-align:center; vertical-align:middle; }
 .results-table tbody tr{ background:#0f172a; border:1px solid #334155; }
 .muted{ opacity:.6; }
 .hidden{ display:none; }
+
+/* Chip para acciones compactas (Informe HTML) */
+.ui-chip {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: .4rem;
+  height: 32px;
+  padding: 0 .8rem;
+  border-radius: 999px;
+  border: 1px solid #2a3b63;
+  background: #172338;
+  color: #cfeaff;
+  font-weight: 700;
+  font-size: 12.5px;
+  line-height: 1;
+  text-decoration: none;
+  white-space: nowrap;
+}
+
+.ui-chip:hover { filter: brightness(1.07); }
+
+/* Las celdas de la tabla: centrado vertical consistente */
+.table td,
+.table th {
+  vertical-align: middle;
+}

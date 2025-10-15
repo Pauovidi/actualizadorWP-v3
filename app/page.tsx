@@ -1,6 +1,7 @@
 'use client';
 
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useState } from 'react';
+import type { ChangeEvent } from 'react';
 import dayjs from 'dayjs';
 
 import styles from './page.module.css';
@@ -10,8 +11,9 @@ type Site = {
   url: string;         // normalizada
   token?: string;
   email?: string;      // email destino (por sitio)
-  invoiceUrl?: string; // blob o url pública PDF
-  invoiceName?: string;
+  destEmail?: string;  // compatibilidad con versiones anteriores
+  invoiceFileName?: string | null;
+  invoiceFileBase64?: string | null;
   lastResult?: UpdateResult | null;
   lastSend?: SendResult | null;
 };
@@ -19,7 +21,7 @@ type Site = {
 type UpdateResult = {
   status: 'OK' | 'ERROR' | 'WARN';
   errors?: string[];
-  reportHtml?: string;         // base64 data URL para descarga
+  reportUrl?: string;
   reportFileName?: string;     // sugerencia de nombre
   at: string;                  // ISO date
 };
@@ -31,11 +33,17 @@ type SendResult = {
   at: string;
 };
 
-const DEMO = process.env.NEXT_PUBLIC_DEMO === '1';
+const DEMO =
+  process.env.NEXT_PUBLIC_MODE === 'demo' ||
+  process.env.NEXT_PUBLIC_DEMO === '1';
 
 const arrayBufferToBase64 = (buffer: ArrayBuffer) => {
   const globalBuffer = (globalThis as unknown as {
-    Buffer?: { from(data: ArrayBuffer): { toString(encoding: string): string } };
+    Buffer?: {
+      from(data: ArrayBuffer | string, encoding?: string): {
+        toString(encoding: string): string;
+      };
+    };
   }).Buffer;
 
   if (globalBuffer?.from) {
@@ -66,13 +74,20 @@ export default function Page() {
     const raw =
       localStorage.getItem('awp_sites_v33') ||
       localStorage.getItem('awp_sites_v32');
-    if (raw) setSites(JSON.parse(raw));
+    if (raw) {
+      const parsed: Site[] = JSON.parse(raw);
+      setSites(
+        parsed.map((site) => ({
+          ...site,
+          invoiceFileName: site.invoiceFileName ?? null,
+          invoiceFileBase64: site.invoiceFileBase64 ?? null,
+        }))
+      );
+    }
   }, []);
   useEffect(() => {
     localStorage.setItem('awp_sites_v33', JSON.stringify(sites));
   }, [sites]);
-
-  const today = useMemo(() => dayjs().format('DD/MM/YYYY'), []);
 
   const addSite = () =>
     setSites(s => [
@@ -82,17 +97,13 @@ export default function Page() {
         url: 'https://',
         token: DEMO ? `demo-${Math.random().toString(36).slice(2, 8)}` : '',
         email: '',
+        invoiceFileName: null,
+        invoiceFileBase64: null,
       },
     ]);
 
   const removeSite = (i: number) =>
-    setSites((current) => {
-      const target = current[i];
-      if (target?.invoiceUrl) {
-        URL.revokeObjectURL(target.invoiceUrl);
-      }
-      return current.filter((_, idx) => idx !== i);
-    });
+    setSites((current) => current.filter((_, idx) => idx !== i));
 
   const updateSite = (i: number, patch: Partial<Site>) =>
     setSites(s => s.map((site, idx) => (idx === i ? { ...site, ...patch } : site)));
@@ -113,11 +124,16 @@ export default function Page() {
     try {
       const res = await fetch('/api/update', {
         method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          url: normalizeUrl(site.url),
-          token: site.token ?? '',
-          screenshot: process.env.NEXT_PUBLIC_SCREENSHOT_ENABLED === '1',
-          demo: process.env.NEXT_PUBLIC_DEMO === '1',
+          sites: [
+            {
+              name: site.name,
+              url: normalizeUrl(site.url),
+              token: site.token ?? '',
+              email: site.email ?? '',
+            },
+          ],
         }),
       });
       let json: any = null;
@@ -134,12 +150,50 @@ export default function Page() {
           lastResult: {
             status: 'ERROR',
             errors: [errorMessage],
-            reportHtml: undefined,
+            reportUrl: undefined,
             reportFileName: undefined,
             at: new Date().toISOString(),
           },
         });
         alert(`Actualizado ${site.name}: con incidencias ("${errorMessage}")`);
+        return;
+      }
+
+      const results = Array.isArray(json?.results) ? json.results : null;
+      if (results?.length) {
+        const result = results[0] ?? {};
+        const rawStatus = String(result?.status || '').toLowerCase();
+        let normalizedStatus: UpdateResult['status'] = 'WARN';
+        if (rawStatus === 'ok') normalizedStatus = 'OK';
+        else if (rawStatus === 'ok_with_notes' || rawStatus === 'warn') normalizedStatus = 'WARN';
+        else if (rawStatus === 'error' || rawStatus === 'err') normalizedStatus = 'ERROR';
+
+        const errorsList: string[] = [];
+        if (Array.isArray(result?.errors)) {
+          errorsList.push(...result.errors.map((err: unknown) => String(err)));
+        } else if (typeof result?.errors === 'number' && result.errors > 0) {
+          errorsList.push(`Errores detectados: ${result.errors}`);
+        } else if (result?.errors) {
+          errorsList.push(String(result.errors));
+        }
+        if (result?.message) {
+          errorsList.push(String(result.message));
+        }
+
+        const reportUrl: string | undefined =
+          typeof result?.reportUrl === 'string' ? result.reportUrl : undefined;
+        const reportFileName = reportUrl?.split('/').pop();
+
+        updateSite(i, {
+          lastResult: {
+            status: normalizedStatus,
+            errors: errorsList,
+            reportUrl,
+            reportFileName: reportFileName || 'informe-demo.html',
+            at: new Date().toISOString(),
+          },
+        });
+        alert(`Actualizado ${site.name}: ${normalizedStatus}`);
         return;
       }
 
@@ -158,21 +212,35 @@ export default function Page() {
         payload?.report?.base64 ||
         payload?.report;
 
-      let reportDataUrl: string | undefined;
-      if (typeof reportHtmlRaw === 'string') {
+      let reportLink: string | undefined =
+        typeof payload?.reportUrl === 'string' ? payload.reportUrl : undefined;
+      if (!reportLink && typeof reportHtmlRaw === 'string') {
         if (reportHtmlRaw.startsWith('data:')) {
-          reportDataUrl = reportHtmlRaw;
+          reportLink = reportHtmlRaw;
         } else if (/[<>]/.test(reportHtmlRaw)) {
-          if (typeof TextEncoder !== 'undefined') {
-            reportDataUrl = `data:text/html;base64,${arrayBufferToBase64(
-              new TextEncoder().encode(reportHtmlRaw).buffer
-            )}`;
-          } else {
-            const bytes = new Uint8Array([...reportHtmlRaw].map((c) => c.charCodeAt(0)));
-            reportDataUrl = `data:text/html;base64,${arrayBufferToBase64(bytes.buffer)}`;
+          try {
+            if (typeof TextEncoder !== 'undefined') {
+              const buffer = new TextEncoder().encode(reportHtmlRaw).buffer;
+              reportLink = `data:text/html;base64,${arrayBufferToBase64(buffer)}`;
+            } else {
+              const globalBuffer = (globalThis as unknown as {
+                Buffer?: {
+                  from(data: string, encoding?: string): {
+                    toString(encoding: string): string;
+                  };
+                };
+              }).Buffer;
+              if (globalBuffer?.from) {
+                reportLink = `data:text/html;base64,${globalBuffer
+                  .from(reportHtmlRaw, 'utf-8')
+                  .toString('base64')}`;
+              }
+            }
+          } catch {
+            reportLink = undefined;
           }
         } else {
-          reportDataUrl = `data:text/html;base64,${reportHtmlRaw}`;
+          reportLink = `data:text/html;base64,${reportHtmlRaw}`;
         }
       }
 
@@ -185,7 +253,7 @@ export default function Page() {
         lastResult: {
           status: payload?.status ?? 'OK',
           errors: normalizedErrors,
-          reportHtml: reportDataUrl,
+          reportUrl: reportLink,
           reportFileName: fileName,
           at: new Date().toISOString(),
         },
@@ -196,7 +264,7 @@ export default function Page() {
         lastResult: {
           status: 'ERROR',
           errors: [String(e)],
-          reportHtml: undefined,
+          reportUrl: undefined,
           reportFileName: undefined,
           at: new Date().toISOString(),
         },
@@ -207,84 +275,136 @@ export default function Page() {
     }
   };
 
-  const downloadReport = (r?: UpdateResult | null) => {
-    if (!r?.reportHtml) return;
-    const a = document.createElement('a');
-    a.href = r.reportHtml;
-    a.download = r.reportFileName || 'informe.html';
-    document.body.appendChild(a);
-    a.click();
-    a.remove();
-  };
-
-  const uploadInvoice = async (i: number, file: File) => {
-    const blobUrl = URL.createObjectURL(file);
-    setSites((current) =>
-      current.map((site, idx) => {
-        if (idx !== i) return site;
-        if (site.invoiceUrl) {
-          URL.revokeObjectURL(site.invoiceUrl);
-        }
-        return { ...site, invoiceUrl: blobUrl, invoiceName: file.name, lastSend: null };
-      })
-    );
-  };
-
-  const sendOne = async (i: number, manageBusy = true) => {
-    const site = sites[i];
-    if (!site) return;
-
-    if (!site.invoiceUrl) {
-      alert(`Falta factura PDF en ${site.name}`);
+  const onPickInvoice = (idx: number) => async (e: ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) {
+      setSites((current) =>
+        current.map((site, i) =>
+          i === idx
+            ? {
+                ...site,
+                invoiceFileName: null,
+                invoiceFileBase64: null,
+                lastSend: null,
+              }
+            : site
+        )
+      );
+      e.target.value = '';
       return;
     }
 
+    const base64 = await new Promise<string>((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => {
+        const result = typeof reader.result === 'string' ? reader.result : '';
+        const [, content] = result.split(',');
+        resolve(content || '');
+      };
+      reader.onerror = () => reject(reader.error);
+      reader.readAsDataURL(file);
+    });
+
+    setSites((current) =>
+      current.map((site, i) =>
+        i === idx
+          ? {
+              ...site,
+              invoiceFileName: file.name,
+              invoiceFileBase64: base64,
+              lastSend: null,
+            }
+          : site
+      )
+    );
+    e.target.value = '';
+  };
+
+  const renderReport = (r?: UpdateResult | null) => {
+    const url = typeof r?.reportUrl === 'string' ? r.reportUrl : null;
+    if (!url) {
+      return <span className={styles.muted}>—</span>;
+    }
+
+    return (
+      <a
+        className="ui-chip"
+        href={url}
+        target="_blank"
+        rel="noopener noreferrer"
+      >
+        Ver informe
+      </a>
+    );
+  };
+
+  const sendEmail = async (row: Site, index: number, manageBusy = true) => {
+    const siteName = row.name || 'sitio';
+    const to = (row.email || row.destEmail || '').trim();
+    if (!to) {
+      alert("Falta 'Email destino'");
+      return;
+    }
+
+    const reportUrl =
+      typeof row.lastResult?.reportUrl === 'string'
+        ? row.lastResult.reportUrl
+        : null;
+
     try {
       if (manageBusy) setBusy(true);
-      updateSite(i, { lastSend: null });
-      // obtenemos el PDF como blob para adjuntarlo
-      const pdfBlob = await (await fetch(site.invoiceUrl)).blob();
-      const pdfBuffer = await pdfBlob.arrayBuffer();
-      const pdfBase64 = arrayBufferToBase64(pdfBuffer);
+      updateSite(index, { lastSend: null });
+
+      const attachments = row.invoiceFileBase64
+        ? [
+            {
+              filename: row.invoiceFileName || 'factura.pdf',
+              contentBase64: row.invoiceFileBase64,
+              contentType: 'application/pdf',
+            },
+          ]
+        : [];
+
+      if (row.invoiceFileBase64 && !row.invoiceFileBase64.length) {
+        throw new Error('La factura seleccionada está vacía o no se pudo leer.');
+      }
 
       const res = await fetch('/api/send', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          site: {
-            name: site.name,
-            url: normalizeUrl(site.url),
-            email: site.email, // <- por sitio
-          },
-          reportHtml: site.lastResult?.reportHtml || null,
-          reportFileName: site.lastResult?.reportFileName || 'informe.html',
-          invoice: {
-            fileName: site.invoiceName || `factura-${dayjs().format('YYYYMMDD')}.pdf`,
-            base64: pdfBase64,
-          },
-          subject: `Informe y factura — ${site.name} (${today})`,
+          to,
+          subject: `Informe ${siteName}`,
+          html:
+            'Hola. <br>Adjunto el informe de actualización de tu web, así como la fca. correspondiente a este mes. <br>Un saludo.',
+          reportUrl,
+          attachments,
         }),
       });
 
-      const json = await res.json();
-      if (!json.ok) throw new Error(json.error || 'Fallo desconocido');
-      updateSite(i, {
+      const data = await res.json().catch(() => null);
+      if (!res.ok || !data?.ok) {
+        throw new Error(data?.error || `${res.status} ${res.statusText}`);
+      }
+
+      const via = data?.id ? `SMTP · ${data.id}` : 'SMTP';
+      updateSite(index, {
         lastSend: {
           status: 'OK',
-          via: json.via,
+          via,
           at: new Date().toISOString(),
         },
       });
-      alert(`Enviado ${site.name}: OK`);
+      alert(`Enviado ${siteName}: OK`);
     } catch (e: any) {
-      updateSite(i, {
+      updateSite(index, {
         lastSend: {
           status: 'ERROR',
           error: String(e?.message || e),
           at: new Date().toISOString(),
         },
       });
-      alert(`Error enviando ${site.name}: "${String(e?.message || e)}"`);
+      alert(`Error enviando ${siteName}: "${String(e?.message || e)}"`);
     } finally {
       if (manageBusy) setBusy(false);
     }
@@ -293,10 +413,15 @@ export default function Page() {
   const sendAll = async () => {
     setBusy(true);
     for (let i = 0; i < sites.length; i++) {
-      const s = sites[i];
-      if (!s.invoiceUrl) continue; // respeta regla: solo envía con factura
+      const row = sites[i];
+      if (!row) continue;
+      const to = (row.email || row.destEmail || '').trim();
+      if (!to) {
+        alert(`Falta 'Email destino' en ${row.name || `sitio ${i + 1}`}`);
+        continue;
+      }
       // eslint-disable-next-line no-await-in-loop
-      await sendOne(i, false);
+      await sendEmail(row, i, false);
     }
     setBusy(false);
   };
@@ -305,7 +430,6 @@ export default function Page() {
     <main className="main">
       <header className="topbar">
         <h1 className="title">Panel Actualizador WP</h1>
-        {DEMO && <span className="demo">DEMO</span>}
       </header>
 
       {/* Editor de sitios */}
@@ -364,7 +488,7 @@ export default function Page() {
         <h2 className="section-title">Resultados</h2>
 
         <div className="results-wrapper">
-          <table className="results-table">
+          <table className="results-table table">
             <thead>
               <tr>
                 <th>Sitio</th>
@@ -405,15 +529,7 @@ export default function Page() {
                         <span className={styles.muted}>—</span>
                       )}
                     </td>
-                    <td>
-                      {r?.reportHtml ? (
-                        <button className={`${styles.btn} ${styles.btnSecondary}`} onClick={() => downloadReport(r)}>
-                          Descargar HTML
-                        </button>
-                      ) : (
-                        <span className={styles.muted}>—</span>
-                      )}
-                    </td>
+                    <td>{renderReport(r)}</td>
                     <td className={styles.alignLeft}>
                       {s.lastSend ? (
                         <div className={styles.sendStatus} data-status={s.lastSend.status}>
@@ -430,25 +546,32 @@ export default function Page() {
                       )}
                     </td>
                     <td className={styles.alignLeft}>
-                      <label className={`${styles.btn} ${styles.btnGhost}`}>
-                        Cargar factura PDF
-                        <input
-                          className={styles.fileInput}
-                          type="file"
-                          accept="application/pdf"
-                          onChange={(e) => {
-                            const f = e.target.files?.[0];
-                            if (f) uploadInvoice(i, f);
-                          }}
-                        />
-                      </label>
-                      {s.invoiceUrl && <div className="text-xs pdf-status">✓ PDF listo</div>}
+                      <div className={styles.invoiceCell}>
+                        <label className={`${styles.btn} ${styles.btnGhost}`}>
+                          Cargar factura PDF
+                          <input
+                            className={styles.fileInput}
+                            type="file"
+                            accept="application/pdf"
+                            onChange={onPickInvoice(i)}
+                          />
+                        </label>
+                        <p className={styles.fileName}>
+                          {s.invoiceFileName ? (
+                            s.invoiceFileName
+                          ) : (
+                            <span className={styles.muted}>
+                              <em>Ningún archivo seleccionado</em>
+                            </span>
+                          )}
+                        </p>
+                      </div>
                     </td>
                     <td>
                       <button
                         className={`${styles.btn} ${styles.btnOutline}`}
-                        disabled={busy || !s.invoiceUrl}
-                        onClick={() => sendOne(i)}
+                        disabled={busy}
+                        onClick={() => sendEmail(s, i)}
                       >
                         Enviar email
                       </button>

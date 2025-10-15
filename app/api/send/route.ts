@@ -1,130 +1,138 @@
-import { Buffer } from 'node:buffer';
-import { NextResponse } from 'next/server';
+import { NextResponse } from "next/server";
+import nodemailer from "nodemailer";
 
-export const runtime = 'nodejs';
+export const runtime = "nodejs";
 
-type SendBody = {
-  site: { name: string; url: string; email?: string | null };
-  reportHtml: string | null;       // data URL o null
-  reportFileName: string;          // para el informe
-  invoice?: { fileName: string; base64: string } | null;
-  subject: string;
-};
+function getBaseUrl(req: Request) {
+  const origin = req.headers.get("origin");
+  if (origin) return origin;
+  if (process.env.PUBLIC_BASE_URL) return process.env.PUBLIC_BASE_URL;
+  if (process.env.VERCEL_URL) return `https://${process.env.VERCEL_URL}`;
+  return "";
+}
+
+async function getLogoCidAttachment(req: Request) {
+  const src = new URL("/devestial_logo.png", getBaseUrl(req)).toString();
+  try {
+    const r = await fetch(src);
+    if (!r.ok) return null;
+    const buf = Buffer.from(await r.arrayBuffer());
+    const ct = r.headers.get("content-type") || "image/png";
+    return {
+      filename: "devestial_logo.png",
+      content: buf,
+      contentType: ct,
+      cid: "devestial-logo",
+    };
+  } catch {
+    return null;
+  }
+}
+
+function toAbs(reportUrl: string | null, req: Request) {
+  try {
+    if (!reportUrl) return null;
+    const base = getBaseUrl(req);
+    return new URL(reportUrl, base || undefined).toString();
+  } catch {
+    return null;
+  }
+}
 
 export async function POST(req: Request) {
   try {
-    const body = (await req.json()) as SendBody;
+    const {
+      to,
+      subject,
+      html,
+      attachments = [],
+      reportUrl = null,
+    } = await req.json();
 
-    const to =
-      (body.site.email && body.site.email.trim()) ||
-      process.env.EMAIL_TO_DEFAULT;
+    let recipients: string | undefined;
+    if (Array.isArray(to)) recipients = to.filter(Boolean).join(", ");
+    else if (typeof to === "string") recipients = to.trim();
 
-    if (!to) {
+    if (!recipients) {
       return NextResponse.json(
-        { ok: false, error: 'Email destino vacío (ni por sitio ni global)' },
+        { ok: false, error: 'Missing "to" email' },
         { status: 400 }
       );
     }
 
-    const from = process.env.EMAIL_FROM || 'Devestial <noreply@devestial.com>';
+    const secure =
+      process.env.MAIL_SECURE === "1" ||
+      process.env.MAIL_PORT === "465";
 
-    // Construimos adjuntos
-    const attachments: any[] = [];
-    if (body.reportHtml) {
-      // data:text/html;base64,xxxx
-      const base64 = body.reportHtml.split(',')[1] || '';
-      attachments.push({
-        filename: body.reportFileName || 'informe.html',
-        content: Buffer.from(base64, 'base64'),
-        contentType: 'text/html; charset=utf-8',
-      });
-    }
-    if (body.invoice?.base64) {
-      attachments.push({
-        filename: body.invoice.fileName || 'factura.pdf',
-        content: Buffer.from(body.invoice.base64, 'base64'),
-        contentType: 'application/pdf',
-      });
-    }
+    const transporter = nodemailer.createTransport({
+      host: process.env.MAIL_HOST!,
+      port: Number(process.env.MAIL_PORT || 587),
+      secure,
+      auth: { user: process.env.MAIL_USER!, pass: process.env.MAIL_PASS! },
+    });
 
-    const htmlBody = `
-      <div style="font-family:Inter,system-ui,-apple-system,sans-serif">
-        <p>Hola,</p>
-        <p>Adjuntamos el <strong>informe de actualización</strong> y la <strong>factura</strong> del sitio <b>${body.site.name}</b>.</p>
-        <ul>
-          <li><b>Sitio:</b> ${body.site.name}</li>
-          <li><b>URL:</b> ${body.site.url}</li>
-        </ul>
-        <p>Gracias,<br/>Devestial</p>
-      </div>
-    `;
-
-    // 1) Intento con SMTP
-    try {
-      const { default: nodemailer } = await import('nodemailer');
-
-      const transporter = nodemailer.createTransport({
-        host: process.env.SMTP_HOST,
-        port: Number(process.env.SMTP_PORT || 587),
-        secure: process.env.SMTP_SECURE === '1',
-        auth: {
-          user: process.env.SMTP_USER,
-          pass: process.env.SMTP_PASS,
-        },
-      });
-
-      await transporter.verify(); // validación temprana
-
-      await transporter.sendMail({
-        from,
-        to,
-        subject: body.subject,
-        html: htmlBody,
-        attachments,
-      });
-
-      return NextResponse.json({ ok: true, via: 'smtp' });
-    } catch (smtpErr: any) {
-      // 2) Fallback Resend si hay API key
-      const apiKey = process.env.RESEND_API_KEY;
-      if (!apiKey) {
-        return NextResponse.json(
-          { ok: false, error: `SMTP error: ${smtpErr?.message || smtpErr}` },
-          { status: 500 }
-        );
+    const abs = toAbs(reportUrl, req);
+    let reportHtml: string | null = null;
+    if (abs) {
+      try {
+        const response = await fetch(abs, { cache: "no-store" });
+        reportHtml = response.ok ? await response.text() : null;
+      } catch {
+        reportHtml = null;
       }
-
-      const resp = await fetch('https://api.resend.com/emails', {
-        method: 'POST',
-        headers: {
-          Authorization: `Bearer ${apiKey}`,
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          from,
-          to,
-          subject: body.subject,
-          html: htmlBody,
-          attachments: attachments.map((a) => ({
-            filename: a.filename,
-            content: a.content.toString('base64'),
-          })),
-        }),
-      });
-
-      if (!resp.ok) {
-        const t = await resp.text();
-        return NextResponse.json(
-          { ok: false, error: `Resend error: ${t}` },
-          { status: 500 }
-        );
-      }
-
-      return NextResponse.json({ ok: true, via: 'resend' });
     }
-  } catch (err: any) {
+
+    const nmAttachments: any[] = [];
+    if (reportHtml) {
+      nmAttachments.push({
+        filename: "informe.html",
+        content: Buffer.from(reportHtml, "utf8"),
+        contentType: "text/html; charset=utf-8",
+      });
+    }
+
+    for (const attachment of attachments as any[]) {
+      if (attachment?.contentBase64) {
+        nmAttachments.push({
+          filename: attachment.filename || "adjunto.bin",
+          content: Buffer.from(attachment.contentBase64, "base64"),
+          contentType: attachment.contentType || "application/octet-stream",
+        });
+      } else if (attachment?.url) {
+        nmAttachments.push({
+          filename: attachment.filename || undefined,
+          path: attachment.url,
+        });
+      }
+    }
+
+    const intro =
+      html ||
+      'Hola. <br>Adjunto el informe de actualización de tu web, así como la fca. correspondiente a este mes. <br>Un saludo.';
+    const logoCid = await getLogoCidAttachment(req);
+    if (logoCid) nmAttachments.push(logoCid);
+
+    const htmlBody =
+      intro +
+      (abs
+        ? `<p><a href="${abs}">Abrir informe en el navegador</a></p>`
+        : "") +
+      `<div style="margin-top:12px">
+     <img src="cid:devestial-logo" alt="Devestial" style="height:40px;display:block;opacity:.95">
+   </div>`;
+
+    const info = await transporter.sendMail({
+      from: process.env.MAIL_FROM!,
+      to: recipients,
+      subject: subject || "Informe",
+      html: htmlBody,
+      attachments: nmAttachments,
+    });
+
+    return NextResponse.json({ ok: true, id: info.messageId });
+  } catch (e: any) {
     return NextResponse.json(
-      { ok: false, error: err?.message || String(err) },
+      { ok: false, error: e?.message || String(e) },
       { status: 500 }
     );
   }
