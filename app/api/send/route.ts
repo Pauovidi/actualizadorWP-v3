@@ -11,21 +11,6 @@ function getBaseUrl(req: Request) {
   return "";
 }
 
-function fromDataUrl(u: string): Buffer | null {
-  try {
-    if (!u.startsWith("data:")) return null;
-    const match = u.match(/^data:([^,]*),(.*)$/);
-    if (!match) return null;
-    const [, meta, data] = match;
-    if (!data) return null;
-    const isB64 = /;base64/i.test(meta || "");
-    const payload = decodeURIComponent(data);
-    return isB64 ? Buffer.from(payload, "base64") : Buffer.from(payload, "utf8");
-  } catch {
-    return null;
-  }
-}
-
 async function getLogoCidAttachment(req: Request) {
   const src = new URL("/devestial_logo.png", getBaseUrl(req)).toString();
   try {
@@ -56,14 +41,13 @@ function toAbs(reportUrl: string | null, req: Request) {
 
 export async function POST(req: Request) {
   try {
-    const body = await req.json();
     const {
       to,
       subject,
       html,
       attachments = [],
       reportUrl = null,
-    } = body;
+    } = await req.json();
 
     let recipients: string | undefined;
     if (Array.isArray(to)) recipients = to.filter(Boolean).join(", ");
@@ -87,40 +71,22 @@ export async function POST(req: Request) {
       auth: { user: process.env.MAIL_USER!, pass: process.env.MAIL_PASS! },
     });
 
-    const reportHtmlInline = typeof body?.reportHtml === "string" ? body.reportHtml : null;
-    const reportFileName =
-      typeof body?.reportFileName === "string" && body.reportFileName
-        ? body.reportFileName
-        : undefined;
-
-    const resolved =
-      typeof reportUrl === "string" && reportUrl.startsWith("data:")
-        ? null
-        : toAbs(reportUrl, req);
-
-    let reportBuffer: Buffer | null = null;
-    if (typeof reportUrl === "string" && reportUrl.startsWith("data:")) {
-      reportBuffer = fromDataUrl(reportUrl) || null;
-    } else if (resolved) {
+    const abs = toAbs(reportUrl, req);
+    let reportHtml: string | null = null;
+    if (abs) {
       try {
-        const response = await fetch(resolved, { cache: "no-store" });
-        if (response.ok) {
-          reportBuffer = Buffer.from(await response.arrayBuffer());
-        }
+        const response = await fetch(abs, { cache: "no-store" });
+        reportHtml = response.ok ? await response.text() : null;
       } catch {
-        reportBuffer = null;
+        reportHtml = null;
       }
     }
 
-    if (!reportBuffer && reportHtmlInline) {
-      reportBuffer = Buffer.from(reportHtmlInline, "utf8");
-    }
-
     const nmAttachments: any[] = [];
-    if (reportBuffer) {
+    if (reportHtml) {
       nmAttachments.push({
-        filename: reportFileName || "informe.html",
-        content: reportBuffer,
+        filename: "informe.html",
+        content: Buffer.from(reportHtml, "utf8"),
         contentType: "text/html; charset=utf-8",
       });
     }
@@ -140,17 +106,16 @@ export async function POST(req: Request) {
       }
     }
 
-    const logoCid = await getLogoCidAttachment(req);
-    if (logoCid) nmAttachments.push(logoCid);
-
     const intro =
       html ||
       'Hola. <br>Adjunto el informe de actualización de tu web, así como la fca. correspondiente a este mes. <br>Un saludo.';
+    const logoCid = await getLogoCidAttachment(req);
+    if (logoCid) nmAttachments.push(logoCid);
 
     const htmlBody =
       intro +
-      (resolved
-        ? `<p><a href="${resolved}">Abrir informe en el navegador</a></p>`
+      (abs
+        ? `<p><a href="${abs}">Abrir informe en el navegador</a></p>`
         : "") +
       `<div style="margin-top:12px">
      <img src="cid:devestial-logo" alt="Devestial" style="height:40px;display:block;opacity:.95">
