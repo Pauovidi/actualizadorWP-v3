@@ -320,7 +320,7 @@ export default function Page() {
     e.target.value = '';
   };
 
-  const renderReportLink = (r?: UpdateResult | null) => {
+  const renderReport = (r?: UpdateResult | null) => {
     const url = typeof r?.reportUrl === 'string' ? r.reportUrl : null;
     if (!url) {
       return <span className={styles.muted}>—</span>;
@@ -328,12 +328,12 @@ export default function Page() {
 
     return (
       <a
-        className={`${styles.btn} ${styles.btnSecondary}`}
+        className="ui-chip"
         href={url}
         target="_blank"
         rel="noopener noreferrer"
       >
-        Ver HTML
+        HTML
       </a>
     );
   };
@@ -375,7 +375,8 @@ export default function Page() {
         body: JSON.stringify({
           to,
           subject: `Informe ${siteName}`,
-          html: 'Hola. <br>Adjunto el informe de actualización de tu web, así como la fca. correspondiente a este mes. <br>Un saludo.',
+          html:
+            'Hola. <br>Adjunto el informe de actualización de tu web, así como la fca. correspondiente a este mes. <br>Un saludo.',
           reportUrl,
           attachments,
         }),
@@ -487,7 +488,7 @@ export default function Page() {
         <h2 className="section-title">Resultados</h2>
 
         <div className="results-wrapper">
-          <table className="results-table">
+          <table className="results-table table">
             <thead>
               <tr>
                 <th>Sitio</th>
@@ -528,7 +529,7 @@ export default function Page() {
                         <span className={styles.muted}>—</span>
                       )}
                     </td>
-                    <td>{renderReportLink(r)}</td>
+                    <td>{renderReport(r)}</td>
                     <td className={styles.alignLeft}>
                       {s.lastSend ? (
                         <div className={styles.sendStatus} data-status={s.lastSend.status}>

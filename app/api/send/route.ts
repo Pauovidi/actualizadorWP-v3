@@ -11,7 +11,7 @@ function getBaseUrl(req: Request) {
   return "";
 }
 
-function toAbsoluteUrl(reportUrl: string | null, req: Request) {
+function toAbs(reportUrl: string | null, req: Request) {
   try {
     if (!reportUrl) return null;
     const base = getBaseUrl(req);
@@ -53,11 +53,11 @@ export async function POST(req: Request) {
       auth: { user: process.env.MAIL_USER!, pass: process.env.MAIL_PASS! },
     });
 
-    const resolved = toAbsoluteUrl(reportUrl, req);
+    const abs = toAbs(reportUrl, req);
     let reportHtml: string | null = null;
-    if (resolved) {
+    if (abs) {
       try {
-        const response = await fetch(resolved, { cache: "no-store" });
+        const response = await fetch(abs, { cache: "no-store" });
         reportHtml = response.ok ? await response.text() : null;
       } catch {
         reportHtml = null;
@@ -93,15 +93,15 @@ export async function POST(req: Request) {
       'Hola. <br>Adjunto el informe de actualización de tu web, así como la fca. correspondiente a este mes. <br>Un saludo.';
     const htmlBody =
       intro +
-      (resolved
-        ? `<p><a href="${resolved}">Abrir informe en el navegador</a></p>`
+      (abs
+        ? `<p><a href="${abs}">Abrir informe en el navegador</a></p>`
         : "") +
       (reportHtml ? `<hr>${reportHtml}` : "");
 
     const info = await transporter.sendMail({
       from: process.env.MAIL_FROM!,
       to: recipients,
-      subject: subject || "Informe DEMO",
+      subject: subject || "Informe",
       html: htmlBody,
       attachments: nmAttachments,
     });

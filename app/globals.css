@@ -34,3 +34,30 @@ body{ background:var(--bg); color:var(--fg); }
 .results-table tbody tr{ background:#0f172a; border:1px solid #334155; }
 .muted{ opacity:.6; }
 .hidden{ display:none; }
+
+/* Chip para acciones compactas (Informe HTML) */
+.ui-chip {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: .4rem;
+  height: 32px;
+  padding: 0 .8rem;
+  border-radius: 999px;
+  border: 1px solid #2a3b63;
+  background: #172338;
+  color: #cfeaff;
+  font-weight: 700;
+  font-size: 12.5px;
+  line-height: 1;
+  text-decoration: none;
+  white-space: nowrap;
+}
+
+.ui-chip:hover { filter: brightness(1.07); }
+
+/* Las celdas de la tabla: centrado vertical consistente */
+.table td,
+.table th {
+  vertical-align: middle;
+}
