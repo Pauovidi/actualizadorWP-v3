@@ -321,14 +321,15 @@ export default function Page() {
   };
 
   const renderReportLink = (r?: UpdateResult | null) => {
-    if (!r?.reportUrl) {
+    const url = typeof r?.reportUrl === 'string' ? r.reportUrl : null;
+    if (!url) {
       return <span className={styles.muted}>—</span>;
     }
 
     return (
       <a
         className={`${styles.btn} ${styles.btnSecondary}`}
-        href={r.reportUrl}
+        href={url}
         target="_blank"
         rel="noopener noreferrer"
       >
@@ -344,6 +345,11 @@ export default function Page() {
       alert("Falta 'Email destino'");
       return;
     }
+
+    const reportUrl =
+      typeof row.lastResult?.reportUrl === 'string'
+        ? row.lastResult.reportUrl
+        : null;
 
     try {
       if (manageBusy) setBusy(true);
@@ -369,7 +375,8 @@ export default function Page() {
         body: JSON.stringify({
           to,
           subject: `Informe ${siteName}`,
-          html: '<p>Informe DEMO adjunto.</p>',
+          html: 'Hola. <br>Adjunto el informe de actualización de tu web, así como la fca. correspondiente a este mes. <br>Un saludo.',
+          reportUrl,
           attachments,
         }),
       });
