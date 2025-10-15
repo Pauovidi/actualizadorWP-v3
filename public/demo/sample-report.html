@@ -20,8 +20,6 @@
     .card{background:var(--card);border:1px solid var(--line);border-radius:var(--radius);padding:16px;box-shadow:var(--shadow)}
     .meta{display:grid;grid-template-columns:1fr 1fr;gap:12px}
     .meta div{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:10px}
-    .brand-right{display:flex;justify-content:flex-end;margin-top:14px}
-    .brand-right img{max-height:42px;opacity:.95}
     .status{display:inline-flex;align-items:center;gap:8px;font-weight:700}
     .dot{width:10px;height:10px;border-radius:50%}
     .ok .dot{background:var(--ok)} .warn .dot{background:var(--warn)} .err .dot{background:var(--err)}
@@ -36,12 +34,26 @@
     .ribbon{position:fixed;top:12px;right:12px;z-index:50}
     .ribbon span{border:1px solid #0fc2cb55;color:var(--accent);background:#0fc2cb22;border-radius:12px;padding:6px 10px;font-weight:700}
     .grid{display:grid;grid-template-columns:2fr 1fr;gap:16px}
+    .report-footer{
+      display:flex;
+      align-items:center;
+      justify-content:space-between;
+      gap:16px;
+      margin:18px 4px 0;
+      padding-top:8px;
+      border-top:1px solid var(--line);
+    }
+    .report-footer .brand-foot{
+      max-height:28px;
+      opacity:.9;
+    }
     @media (max-width:960px){ .grid{grid-template-columns:1fr} .kpi{grid-template-columns:repeat(2,1fr)} }
     @media print{
       .btn,.ribbon{display:none}
       body{background:#fff;color:#111}
       .card, .meta div{box-shadow:none;border-color:#ddd}
       .wrap{padding:0}
+      .report-footer{border-top:1px solid #ddd}
     }
   </style>
 </head>
@@ -120,13 +132,13 @@
           <div><div class="small">Base de datos</div><div>{{dbVersion}}</div></div>
           <div><div class="small">Entorno</div><div>{{environment}}</div></div>
         </div>
-        <div class="brand-right">
-          <img src="/devestial_logo.png" alt="Devestial">
-        </div>
       </aside>
     </div>
 
-    <p class="small" style="margin:18px 4px 0">© Devestial</p>
+    <div class="report-footer">
+      <p class="small" style="margin:0">© Devestial</p>
+      <img class="brand-foot" src="/Devestial_logo_blanco.png" alt="Devestial">
+    </div>
   </div>
 
   <script>
