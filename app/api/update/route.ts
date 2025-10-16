@@ -1,3 +1,4 @@
+// app/api/update/route.ts
 import { NextResponse } from "next/server";
 import { isDemo } from "@/lib/env";
 
@@ -14,7 +15,7 @@ type Result = {
 
 export const runtime = "nodejs";
 
-// Mapeo simple equivalente a lo que ya tenías
+// Mapeo simple (como el original)
 function mapStatus(s: any): Result["status"] {
   const t = String(s || "").toUpperCase();
   if (t === "OK") return "ok";
@@ -36,21 +37,21 @@ export async function POST(req: Request) {
       status: "ok_with_notes",
       errors: 0,
       message: "DEMO: generado informe ficticio",
-      reportUrl: "/demo/sample-report.html", // mantiene tu informe demo
+      reportUrl: "/demo/sample-report.html",
       reportFileName: "informe-demo.html",
       lastSentAt: null,
     }));
     return NextResponse.json({ ok: true, mode: "demo", results }, { status: 200 });
   }
 
-  // --- REAL ---
+  // --- REAL (Bearer SIEMPRE; el token es el que emite tu plugin) ---
   const results: Result[] = await Promise.all(
     sites.map(async (s) => {
       const siteName = s?.name || s?.url || "Sitio";
-      const url = (s?.url || "").trim().replace(/\/$/, "");
+      const baseUrl = (s?.url || "").trim().replace(/\/$/, "");
       const token = (s?.token || "").trim();
 
-      if (!url || !/^https?:\/\//i.test(url)) {
+      if (!baseUrl || !/^https?:\/\//i.test(baseUrl)) {
         return {
           site: siteName,
           status: "error",
@@ -61,28 +62,55 @@ export async function POST(req: Request) {
           lastSentAt: null,
         };
       }
+      if (!token) {
+        return {
+          site: siteName,
+          status: "error",
+          errors: 1,
+          message: "Token no enviado",
+          reportUrl: null,
+          reportFileName: null,
+          lastSentAt: null,
+        };
+      }
 
-      const endpoint = `${url}/wp-json/maint-agent/v1/update`;
+      const endpoint = `${baseUrl}/wp-json/maint-agent/v1/update`;
 
       try {
+        const headers: Record<string, string> = {
+          "content-type": "application/json",
+          accept: "application/json",
+          Authorization: `Bearer ${token}`, // <--- SIEMPRE Bearer (token del plugin)
+        };
+
         const res = await fetch(endpoint, {
           method: "POST",
-          headers: {
-            "content-type": "application/json",
-            ...(token ? { Authorization: `Bearer ${token}` } : {}),
-          },
+          headers,
           body: JSON.stringify({ screenshot: false }),
         });
 
         if (!res.ok) {
           const text = await res.text().catch(() => "");
-          // Mensajes claros pero simples (sin robustecidos)
+          // Log útil en Vercel para diagnosticar rápido
+          console.error("[/api/update] WP error", {
+            site: siteName,
+            endpoint,
+            status: res.status,
+            statusText: res.statusText,
+            snippet: text?.slice(0, 300),
+          });
+
           const note =
-            res.status === 401
+            res.status === 400
+              ? "JSON inválido o esquema no esperado"
+              : res.status === 401
               ? "Token inválido o no enviado"
+              : res.status === 403
+              ? "Acceso denegado"
               : res.status === 404
               ? "Endpoint no encontrado (/wp-json/maint-agent/v1/update)"
               : `HTTP ${res.status} ${res.statusText}`;
+
           return {
             site: siteName,
             status: "error",
@@ -97,7 +125,7 @@ export async function POST(req: Request) {
         const data: any = await res.json().catch(() => ({}));
 
         // El agente puede devolver:
-        //  - htmlReport: string (HTML completo)
+        //  - htmlReport: string (HTML completo inline)
         //  - reportUrl: URL absoluta http/https
         //  - status, errors (array o número), message, reportFileName
         let reportUrl: string | null = null;
@@ -107,6 +135,7 @@ export async function POST(req: Request) {
         if (typeof data?.reportUrl === "string" && /^https?:\/\//i.test(data.reportUrl)) {
           reportUrl = data.reportUrl;
         } else if (typeof data?.htmlReport === "string" && data.htmlReport.length) {
+          // Convertimos a data URL para que “Ver informe” funcione y /api/send pueda adjuntarlo
           const b64 = Buffer.from(data.htmlReport, "utf8").toString("base64");
           reportUrl = `data:text/html;base64,${b64}`;
         }
