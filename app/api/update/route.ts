@@ -15,10 +15,7 @@ type SiteResult = {
 function normalizeUrl(input: string): string {
   if (!input) return "";
   let t = input.trim();
-  if (!/^https?:\/\//i.test(t)) {
-    // añade https:// si no hay esquema y quita www. inicial (la UI ya hace algo similar)
-    t = "https://" + t.replace(/^www\./i, "");
-  }
+  if (!/^https?:\/\//i.test(t)) t = "https://" + t.replace(/^www\./i, "");
   return t.replace(/\/+$/, "");
 }
 
@@ -28,7 +25,7 @@ function cleanToken(tok: string): string {
 
 export async function POST(req: Request) {
   try {
-    // 1) Leer body (JSON o form-data)
+    // --- 1) Body (JSON o form-data) ---
     let body: any = null;
     try {
       body = await req.json();
@@ -45,7 +42,7 @@ export async function POST(req: Request) {
       }
     }
 
-    // 2) Aceptar ambos formatos: { siteUrl, token } o { sites: [...] }
+    // --- 2) Aceptar ambos formatos: { siteUrl, token } o { sites: [...] } ---
     let sites: SiteInput[] = [];
     if (body?.siteUrl && body?.token) {
       sites = [{ url: String(body.siteUrl), token: String(body.token) }];
@@ -53,17 +50,17 @@ export async function POST(req: Request) {
       sites = body.sites as SiteInput[];
     }
 
-    // Validación básica
     if (!sites.length) {
+      // Mantengo 400 aquí porque sí es un error de input real
       return NextResponse.json(
         { ok: false, error: "Missing siteUrl/token" },
         { status: 400 }
       );
     }
 
-    // 3) Procesar cada sitio con la MISMA lógica que el CLI Python:
-    //    POST sin body, sin Content-Type ni Authorization, con X-MAINT-TOKEN
+    // --- 3) Procesar sitios con la MISMA lógica que el CLI Python ---
     const results: SiteResult[] = [];
+
     for (const s of sites) {
       const url = normalizeUrl(s.url);
       const token = cleanToken(s.token);
@@ -87,17 +84,13 @@ export async function POST(req: Request) {
           headers: {
             Accept: "application/json",
             "User-Agent": "wp-maint-agent/ui",
-            "X-MAINT-TOKEN": token,
+            "X-MAINT-TOKEN": token, // <-- como tu Python
           },
         });
 
         const text = await upstream.text();
         let data: any = null;
-        try {
-          data = JSON.parse(text);
-        } catch {
-          // WP podría devolver texto/HTML; lo guardamos en text
-        }
+        try { data = JSON.parse(text); } catch { /* puede ser HTML/texto */ }
 
         if (!upstream.ok) {
           results.push({
@@ -105,15 +98,13 @@ export async function POST(req: Request) {
             url,
             status: "ERROR",
             errors: [
-              `${upstream.status} ${upstream.statusText}`,
+              `${upstream.status} ${upstream.statusText || ""}`.trim(),
               typeof text === "string" ? text.slice(0, 500) : "Upstream error",
             ],
           });
           continue;
         }
 
-        // Intentamos mapear respuesta del plugin a lo que consume la UI
-        // Campos habituales: status, errors, reportUrl, message, report.{fileName, html/base64}
         const errors: string[] = [];
         if (Array.isArray(data?.errors)) {
           errors.push(...data.errors.map((x: any) => String(x)));
@@ -127,14 +118,12 @@ export async function POST(req: Request) {
 
         let reportUrl: string | undefined =
           typeof data?.reportUrl === "string" ? data.reportUrl : undefined;
+
         let reportFileName: string | undefined =
           (data?.reportFileName as string) ||
           (data?.report?.fileName as string) ||
           undefined;
 
-        // Si el plugin devuelve el HTML/base64 pero no URL, la UI ya sabe convertir a data:,
-        // pero por comodidad si viene una base64 plana sin prefijo, la mantenemos tal cual en data.report
-        // La UI que tienes ya contempla varias variantes en n.data.*
         results.push({
           name,
           url,
@@ -154,10 +143,16 @@ export async function POST(req: Request) {
       }
     }
 
-    // 4) Respuesta para la UI: { ok, results }
-    const hasError = results.some((r) => r.status === "ERROR");
+    // --- 4) Siempre ok:true para que la UI NO corte el flujo y pinte la tabla ---
+    const summary = {
+      total: results.length,
+      ok: results.filter(r => r.status === "OK").length,
+      warn: results.filter(r => r.status === "WARN").length,
+      error: results.filter(r => r.status === "ERROR").length,
+    };
+
     return NextResponse.json(
-      { ok: !hasError, results },
+      { ok: true, results, summary },
       { status: 200 }
     );
   } catch (err: any) {
