@@ -1,494 +1,452 @@
 'use client';
 
-import { useEffect, useState } from 'react';
-import type { ChangeEvent } from 'react';
+import React, { useEffect, useState } from 'react';
 import dayjs from 'dayjs';
-
 import styles from './page.module.css';
 
-type Site = {
-  name: string;
-  url: string;         // normalizada
-  token?: string;
-  email?: string;      // email destino (por sitio)
-  destEmail?: string;  // compatibilidad con versiones anteriores
-  invoiceFileName?: string | null;
-  invoiceFileBase64?: string | null;
-  lastResult?: UpdateResult | null;
-  lastSend?: SendResult | null;
-};
-
-type UpdateResult = {
-  status: 'OK' | 'ERROR' | 'WARN';
+type LastResult = {
+  status: 'OK' | 'WARN' | 'ERROR' | string;
   errors?: string[];
   reportUrl?: string;
-  reportFileName?: string;     // sugerencia de nombre
-  at: string;                  // ISO date
-};
+  reportFileName?: string;
+  at?: string;
+  message?: string;
+} | null;
 
-type SendResult = {
+type LastSend = {
   status: 'OK' | 'ERROR';
   via?: string;
   error?: string;
   at: string;
+} | null;
+
+type SiteRow = {
+  name: string;
+  url: string;
+  token?: string;
+  email?: string;
+  invoiceFileName: string | null;
+  invoiceFileBase64: string | null;
+  lastResult?: LastResult;
+  lastSend?: LastSend;
 };
 
-const DEMO =
-  process.env.NEXT_PUBLIC_MODE === 'demo' ||
-  process.env.NEXT_PUBLIC_DEMO === '1';
+const LS_KEY = 'awp_sites_v33';
 
-const arrayBufferToBase64 = (buffer: ArrayBuffer) => {
-  const globalBuffer = (globalThis as unknown as {
-    Buffer?: {
-      from(data: ArrayBuffer | string, encoding?: string): {
-        toString(encoding: string): string;
-      };
-    };
-  }).Buffer;
-
-  if (globalBuffer?.from) {
-    return globalBuffer.from(buffer).toString('base64');
+function bufToBase64(arrbuf: ArrayBuffer) {
+  const g = (globalThis as any);
+  const Buf = g?.Buffer;
+  if (Buf?.from) return Buf.from(arrbuf).toString('base64');
+  let bin = '';
+  const bytes = new Uint8Array(arrbuf);
+  for (let i = 0; i < bytes.length; i += 32768) {
+    bin += String.fromCharCode(...bytes.subarray(i, i + 32768));
   }
-
-  let binary = '';
-  const bytes = new Uint8Array(buffer);
-  const chunkSize = 0x8000;
-
-  for (let i = 0; i < bytes.length; i += chunkSize) {
-    binary += String.fromCharCode(...bytes.subarray(i, i + chunkSize));
-  }
-
-  if (typeof btoa === 'function') {
-    return btoa(binary);
-  }
-
+  if (typeof btoa === 'function') return btoa(bin);
   throw new Error('No hay codificador base64 disponible en este entorno');
-};
+}
+
+function normalizeUrl(u?: string) {
+  if (!u) return '';
+  const t = u.trim();
+  if (t.startsWith('http://') || t.startsWith('https://')) return t;
+  return `https://${t.replace(/^www\./i, '')}`;
+}
 
 export default function Page() {
-  const [sites, setSites] = useState<Site[]>([]);
+  const [sites, setSites] = useState<SiteRow[]>([]);
   const [busy, setBusy] = useState(false);
 
-  // carga/persistencia simple en localStorage
+  // Cargar de localStorage
   useEffect(() => {
-    const raw =
-      localStorage.getItem('awp_sites_v33') ||
-      localStorage.getItem('awp_sites_v32');
-    if (raw) {
-      const parsed: Site[] = JSON.parse(raw);
+    const raw = localStorage.getItem(LS_KEY) || localStorage.getItem('awp_sites_v32');
+    if (!raw) return;
+    try {
+      const parsed = JSON.parse(raw) as SiteRow[];
       setSites(
-        parsed.map((site) => ({
-          ...site,
-          invoiceFileName: site.invoiceFileName ?? null,
-          invoiceFileBase64: site.invoiceFileBase64 ?? null,
+        parsed.map((s) => ({
+          ...s,
+          invoiceFileName: s.invoiceFileName ?? null,
+          invoiceFileBase64: s.invoiceFileBase64 ?? null,
         }))
       );
-    }
+    } catch {}
   }, []);
+
+  // Guardar en localStorage
   useEffect(() => {
-    localStorage.setItem('awp_sites_v33', JSON.stringify(sites));
+    localStorage.setItem(LS_KEY, JSON.stringify(sites));
   }, [sites]);
 
-  const addSite = () =>
-    setSites(s => [
-      ...s,
-      {
-        name: 'Nuevo',
-        url: 'https://',
-        token: DEMO ? `demo-${Math.random().toString(36).slice(2, 8)}` : '',
-        email: '',
-        invoiceFileName: null,
-        invoiceFileBase64: null,
-      },
-    ]);
+  const removeRow = (idx: number) =>
+    setSites((prev) => prev.filter((_, i) => i !== idx));
 
-  const removeSite = (i: number) =>
-    setSites((current) => current.filter((_, idx) => idx !== i));
+  const patchRow = (idx: number, patch: Partial<SiteRow>) =>
+    setSites((prev) => prev.map((row, i) => (i === idx ? { ...row, ...patch } : row)));
 
-  const updateSite = (i: number, patch: Partial<Site>) =>
-    setSites(s => s.map((site, idx) => (idx === i ? { ...site, ...patch } : site)));
+  // === Genera el botón/acción "Informe" con manejo para data: ===
+  const renderReportChip = (res: LastResult | undefined) => {
+    const t = typeof res?.reportUrl === 'string' ? res!.reportUrl : null;
+    const file = res?.reportFileName || 'informe.html';
 
-  const normalizeUrl = (raw: string) => {
-    if (!raw) return '';
-    const trimmed = raw.trim();
-    if (trimmed.startsWith('http://') || trimmed.startsWith('https://')) return trimmed;
-    return `https://${trimmed.replace(/^www\./i, '')}`;
-  };
+    if (!t) return <span className={styles.muted}>—</span>;
 
-  const doUpdate = async (i: number, manageBusy = true) => {
-    const site = sites[i];
-    if (!site?.url) return;
-
-    if (manageBusy) setBusy(true);
-    updateSite(i, { lastResult: null });
-    try {
-      const res = await fetch('/api/update', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          sites: [
-            {
-              name: site.name,
-              url: normalizeUrl(site.url),
-              token: site.token ?? '',
-              email: site.email ?? '',
-            },
-          ],
-        }),
-      });
-      let json: any = null;
-      try {
-        json = await res.json();
-      } catch (parseErr) {
-        json = null;
-      }
-
-      if (!res.ok || !json?.ok) {
-        const errorMessage =
-          json?.error || `${res.status} ${res.statusText}`;
-        updateSite(i, {
-          lastResult: {
-            status: 'ERROR',
-            errors: [errorMessage],
-            reportUrl: undefined,
-            reportFileName: undefined,
-            at: new Date().toISOString(),
-          },
-        });
-        alert(`Actualizado ${site.name}: con incidencias ("${errorMessage}")`);
-        return;
-      }
-
-      const results = Array.isArray(json?.results) ? json.results : null;
-      if (results?.length) {
-        const result = results[0] ?? {};
-        const rawStatus = String(result?.status || '').toLowerCase();
-        let normalizedStatus: UpdateResult['status'] = 'WARN';
-        if (rawStatus === 'ok') normalizedStatus = 'OK';
-        else if (rawStatus === 'ok_with_notes' || rawStatus === 'warn') normalizedStatus = 'WARN';
-        else if (rawStatus === 'error' || rawStatus === 'err') normalizedStatus = 'ERROR';
-
-        const errorsList: string[] = [];
-        if (Array.isArray(result?.errors)) {
-          errorsList.push(...result.errors.map((err: unknown) => String(err)));
-        } else if (typeof result?.errors === 'number' && result.errors > 0) {
-          errorsList.push(`Errores detectados: ${result.errors}`);
-        } else if (result?.errors) {
-          errorsList.push(String(result.errors));
-        }
-        if (result?.message) {
-          errorsList.push(String(result.message));
-        }
-
-        const reportUrl: string | undefined =
-          typeof result?.reportUrl === 'string' ? result.reportUrl : undefined;
-        const reportFileName = reportUrl?.split('/').pop();
-
-        updateSite(i, {
-          lastResult: {
-            status: normalizedStatus,
-            errors: errorsList,
-            reportUrl,
-            reportFileName: reportFileName || 'informe-demo.html',
-            at: new Date().toISOString(),
-          },
-        });
-        alert(`Actualizado ${site.name}: ${normalizedStatus}`);
-        return;
-      }
-
-      const payload = json.data as any;
-      const rawErrors = payload?.errors;
-      const normalizedErrors = Array.isArray(rawErrors)
-        ? rawErrors.map((err: unknown) => String(err))
-        : rawErrors
-        ? [String(rawErrors)]
-        : [];
-
-      const reportHtmlRaw =
-        payload?.reportHtml ||
-        payload?.htmlReport ||
-        payload?.report?.html ||
-        payload?.report?.base64 ||
-        payload?.report;
-
-      let reportLink: string | undefined =
-        typeof payload?.reportUrl === 'string' ? payload.reportUrl : undefined;
-      if (!reportLink && typeof reportHtmlRaw === 'string') {
-        if (reportHtmlRaw.startsWith('data:')) {
-          reportLink = reportHtmlRaw;
-        } else if (/[<>]/.test(reportHtmlRaw)) {
-          try {
-            if (typeof TextEncoder !== 'undefined') {
-              const buffer = new TextEncoder().encode(reportHtmlRaw).buffer;
-              reportLink = `data:text/html;base64,${arrayBufferToBase64(buffer)}`;
-            } else {
-              const globalBuffer = (globalThis as unknown as {
-                Buffer?: {
-                  from(data: string, encoding?: string): {
-                    toString(encoding: string): string;
-                  };
-                };
-              }).Buffer;
-              if (globalBuffer?.from) {
-                reportLink = `data:text/html;base64,${globalBuffer
-                  .from(reportHtmlRaw, 'utf-8')
-                  .toString('base64')}`;
-              }
-            }
-          } catch {
-            reportLink = undefined;
-          }
-        } else {
-          reportLink = `data:text/html;base64,${reportHtmlRaw}`;
-        }
-      }
-
-      const fileName =
-        payload?.reportFileName ||
-        payload?.report?.fileName ||
-        `informe-${new Date().toISOString().slice(0, 10)}.html`;
-
-      updateSite(i, {
-        lastResult: {
-          status: payload?.status ?? 'OK',
-          errors: normalizedErrors,
-          reportUrl: reportLink,
-          reportFileName: fileName,
-          at: new Date().toISOString(),
-        },
-      });
-      alert(`Actualizado ${site.name}: ${payload?.status ?? 'OK'}`);
-    } catch (e: any) {
-      updateSite(i, {
-        lastResult: {
-          status: 'ERROR',
-          errors: [String(e)],
-          reportUrl: undefined,
-          reportFileName: undefined,
-          at: new Date().toISOString(),
-        },
-      });
-      alert(`Error actualizando ${site.name}: ${String(e)}`);
-    } finally {
-      if (manageBusy) setBusy(false);
-    }
-  };
-
-  const onPickInvoice = (idx: number) => async (e: ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) {
-      setSites((current) =>
-        current.map((site, i) =>
-          i === idx
-            ? {
-                ...site,
-                invoiceFileName: null,
-                invoiceFileBase64: null,
-                lastSend: null,
-              }
-            : site
-        )
-      );
-      e.target.value = '';
-      return;
-    }
-
-    const base64 = await new Promise<string>((resolve, reject) => {
-      const reader = new FileReader();
-      reader.onload = () => {
-        const result = typeof reader.result === 'string' ? reader.result : '';
-        const [, content] = result.split(',');
-        resolve(content || '');
-      };
-      reader.onerror = () => reject(reader.error);
-      reader.readAsDataURL(file);
-    });
-
-    setSites((current) =>
-      current.map((site, i) =>
-        i === idx
-          ? {
-              ...site,
-              invoiceFileName: file.name,
-              invoiceFileBase64: base64,
-              lastSend: null,
-            }
-          : site
-      )
-    );
-    e.target.value = '';
-  };
-
-  const renderReport = (r?: UpdateResult | null) => {
-    const url = typeof r?.reportUrl === 'string' ? r.reportUrl : null;
-    if (!url) {
-      return <span className={styles.muted}>—</span>;
-    }
-
-    return (
-      <a
-        className="ui-chip"
-        href={url}
-        target="_blank"
-        rel="noopener noreferrer"
-      >
+    const isData = t.startsWith('data:text/html');
+    return isData ? (
+      <a className="ui-chip" href={t} download={file}>
+        Descargar informe
+      </a>
+    ) : (
+      <a className="ui-chip" href={t} target="_blank" rel="noopener">
         Ver informe
       </a>
     );
   };
 
-  const sendEmail = async (row: Site, index: number, manageBusy = true) => {
-    const siteName = row.name || 'sitio';
-    const to = (row.email || row.destEmail || '').trim();
-    if (!to) {
-      alert("Falta 'Email destino'");
-      return;
-    }
-
-    const reportUrl =
-      typeof row.lastResult?.reportUrl === 'string'
-        ? row.lastResult.reportUrl
-        : null;
-
+  // === Acción: Actualizar 1 sitio ===
+  const runUpdate = async (idx: number, showSpinner = true) => {
+    const row = sites[idx];
+    if (!row?.url) return;
     try {
-      if (manageBusy) setBusy(true);
-      updateSite(index, { lastSend: null });
-
-      const attachments = row.invoiceFileBase64
-        ? [
+      if (showSpinner) setBusy(true);
+      patchRow(idx, { lastResult: null });
+      const resp = await fetch('/api/update', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          sites: [
             {
-              filename: row.invoiceFileName || 'factura.pdf',
-              contentBase64: row.invoiceFileBase64,
-              contentType: 'application/pdf',
+              name: row.name,
+              url: normalizeUrl(row.url),
+              token: row.token ?? '',
+              email: row.email ?? '',
             },
-          ]
-        : [];
+          ],
+        }),
+      });
 
-      if (row.invoiceFileBase64 && !row.invoiceFileBase64.length) {
-        throw new Error('La factura seleccionada está vacía o no se pudo leer.');
+      let json: any = null;
+      try {
+        json = await resp.json();
+      } catch {
+        json = null;
       }
 
-      const res = await fetch('/api/send', {
+      if (!resp.ok || !json?.ok) {
+        const errMsg = json?.error || `${resp.status} ${resp.statusText}`;
+        patchRow(idx, {
+          lastResult: {
+            status: 'ERROR',
+            errors: [errMsg],
+            at: new Date().toISOString(),
+          },
+        });
+        alert(`Actualizado ${row.name}: con incidencias ("${errMsg}")`);
+        return;
+      }
+
+      // results[] del backend con reportUrl listo
+      const arr = Array.isArray(json?.results) ? json.results : null;
+      if (arr?.length) {
+        const r0 = arr[0] ?? {};
+        // Normaliza status a “OK | WARN | ERROR”
+        const s = String(r0.status ?? '').toLowerCase();
+        let norm: 'OK' | 'WARN' | 'ERROR' = 'WARN';
+        if (s === 'ok') norm = 'OK';
+        else if (s === 'error' || s === 'err') norm = 'ERROR';
+        else if (s === 'warn' || s === 'ok_with_notes') norm = 'WARN';
+
+        const errs = Array.isArray(r0.errors)
+          ? r0.errors.map((x: any) => String(x))
+          : r0.errors
+          ? [String(r0.errors)]
+          : [];
+
+        const reportUrl: string | undefined =
+          typeof r0.reportUrl === 'string' ? r0.reportUrl : undefined;
+
+        const reportFileName: string | undefined =
+          typeof r0.reportFileName === 'string'
+            ? r0.reportFileName
+            : `informe-${new Date().toISOString().slice(0, 10)}.html`;
+
+        patchRow(idx, {
+          lastResult: {
+            status: norm,
+            errors: errs,
+            reportUrl,
+            reportFileName,
+            at: new Date().toISOString(),
+            message: r0.message,
+          },
+        });
+        alert(`Actualizado ${row.name}: ${norm}`);
+        return;
+      }
+
+      // Soporte “legacy” (si el backend devolviera {data:{...}})
+      const data = json?.data;
+      const g = data?.errors;
+      const errs = Array.isArray(g) ? g.map((x: any) => String(x)) : g ? [String(g)] : [];
+      let reportUrl: string | undefined =
+        typeof data?.reportUrl === 'string' ? data.reportUrl : undefined;
+
+      // Fallback: si vino el HTML en claro, convertirlo a data URL
+      const possibleHtml =
+        data?.reportHtml ||
+        data?.htmlReport ||
+        data?.report?.html ||
+        data?.report?.base64 ||
+        data?.report;
+
+      if (!reportUrl && typeof possibleHtml === 'string') {
+        if (possibleHtml.startsWith('data:')) {
+          reportUrl = possibleHtml;
+        } else if (/[<>]/.test(possibleHtml)) {
+          try {
+            if (typeof TextEncoder !== 'undefined') {
+              const ab = new TextEncoder().encode(possibleHtml).buffer;
+              reportUrl = `data:text/html;base64,${bufToBase64(ab)}`;
+            }
+          } catch {}
+        } else {
+          reportUrl = `data:text/html;base64,${possibleHtml}`;
+        }
+      }
+
+      const reportFileName =
+        data?.reportFileName || data?.report?.fileName || `informe-${new Date().toISOString().slice(0, 10)}.html`;
+
+      patchRow(idx, {
+        lastResult: {
+          status: (data?.status ?? 'OK') as any,
+          errors: errs,
+          reportUrl,
+          reportFileName,
+          at: new Date().toISOString(),
+        },
+      });
+      alert(`Actualizado ${row.name}: ${data?.status ?? 'OK'}`);
+    } catch (e: any) {
+      patchRow(idx, {
+        lastResult: {
+          status: 'ERROR',
+          errors: [String(e?.message ?? e)],
+          at: new Date().toISOString(),
+        },
+      });
+      alert(`Error actualizando ${row.name}: ${String(e?.message ?? e)}`);
+    } finally {
+      if (showSpinner) setBusy(false);
+    }
+  };
+
+  // Cargar factura PDF
+  const onInvoiceChange =
+    (idx: number) =>
+    async (ev: React.ChangeEvent<HTMLInputElement>) => {
+      const file = ev.target.files?.[0];
+      if (!file) {
+        setSites((prev) =>
+          prev.map((row, i) =>
+            i === idx
+              ? { ...row, invoiceFileName: null, invoiceFileBase64: null, lastSend: null }
+              : row
+          )
+        );
+        ev.target.value = '';
+        return;
+      }
+      const base64 = await new Promise<string>((resolve, reject) => {
+        const fr = new FileReader();
+        fr.onload = () => {
+          const val = typeof fr.result === 'string' ? fr.result : '';
+          const [, b64] = val.split(',');
+          resolve(b64 || '');
+        };
+        fr.onerror = () => reject(fr.error);
+        fr.readAsDataURL(file);
+      });
+
+      setSites((prev) =>
+        prev.map((row, i) =>
+          i === idx
+            ? {
+                ...row,
+                invoiceFileName: file.name,
+                invoiceFileBase64: base64,
+                lastSend: null,
+              }
+            : row
+        )
+      );
+      ev.target.value = '';
+    };
+
+  // Enviar email con informe + factura
+  const sendEmail = async (row: SiteRow, idx: number, showSpinner = true) => {
+    const siteName = row.name || 'sitio';
+    const to = (row.email || '').trim();
+    if (!to) {
+      alert(`Falta 'Email destino'`);
+      return;
+    }
+    const reportUrl =
+      typeof row.lastResult?.reportUrl === 'string' ? row.lastResult.reportUrl : null;
+
+    try {
+      if (showSpinner) setBusy(true);
+      patchRow(idx, { lastSend: null });
+
+      const atts =
+        row.invoiceFileBase64 && row.invoiceFileBase64.length
+          ? [
+              {
+                filename: row.invoiceFileName || 'factura.pdf',
+                contentBase64: row.invoiceFileBase64,
+                contentType: 'application/pdf',
+              },
+            ]
+          : [];
+
+      const resp = await fetch('/api/send', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           to,
           subject: `Informe ${siteName}`,
           html:
-            'Hola. <br>Adjunto el informe de actualización de tu web, así como la fca. correspondiente a este mes. <br>Un saludo.',
+            'Hola.<br>Adjunto el informe de actualización de tu web, así como la fca. correspondiente a este mes.<br>Un saludo.',
           reportUrl,
-          attachments,
+          attachments: atts,
         }),
       });
 
-      const data = await res.json().catch(() => null);
-      if (!res.ok || !data?.ok) {
-        throw new Error(data?.error || `${res.status} ${res.statusText}`);
+      const out = await resp.json().catch(() => null);
+      if (!resp.ok || !out?.ok) {
+        throw new Error(out?.error || `${resp.status} ${resp.statusText}`);
       }
 
-      const via = data?.id ? `SMTP · ${data.id}` : 'SMTP';
-      updateSite(index, {
-        lastSend: {
-          status: 'OK',
-          via,
-          at: new Date().toISOString(),
-        },
+      const via = out?.id ? `SMTP · ${out.id}` : 'SMTP';
+      patchRow(idx, {
+        lastSend: { status: 'OK', via, at: new Date().toISOString() },
       });
       alert(`Enviado ${siteName}: OK`);
     } catch (e: any) {
-      updateSite(index, {
+      patchRow(idx, {
         lastSend: {
           status: 'ERROR',
-          error: String(e?.message || e),
+          error: String(e?.message ?? e),
           at: new Date().toISOString(),
         },
       });
-      alert(`Error enviando ${siteName}: "${String(e?.message || e)}"`);
+      alert(`Error enviando ${siteName}: "${String(e?.message ?? e)}"`);
     } finally {
-      if (manageBusy) setBusy(false);
+      if (showSpinner) setBusy(false);
     }
   };
 
+  // Enviar todos (solo email)
   const sendAll = async () => {
     setBusy(true);
     for (let i = 0; i < sites.length; i++) {
       const row = sites[i];
       if (!row) continue;
-      const to = (row.email || row.destEmail || '').trim();
-      if (!to) {
+      const dest = (row.email || '').trim();
+      if (!dest) {
         alert(`Falta 'Email destino' en ${row.name || `sitio ${i + 1}`}`);
         continue;
       }
-      // eslint-disable-next-line no-await-in-loop
       await sendEmail(row, i, false);
     }
     setBusy(false);
   };
 
   return (
-    <main className="main">
-      <header className="topbar">
-        <h1 className="title">Panel Actualizador WP</h1>
+    <main className={styles.main}>
+      <header className={styles.topbar}>
+        <h1 className={styles.title}>Panel Actualizador WP</h1>
       </header>
 
-      {/* Editor de sitios */}
-      <section className="card card-stack">
-        <div className="grid-header">
+      {/* Sitios */}
+      <section className={`${styles.card} ${styles.cardStack}`}>
+        <div className={styles.gridHeader}>
           <div>Nombre</div>
           <div>URL</div>
           <div>Token</div>
           <div>Email destino</div>
         </div>
 
-        {sites.map((s, i) => (
-          <div className="site-row" key={i}>
-            <input
-              className="input"
-              value={s.name}
-              onChange={(e) => updateSite(i, { name: e.target.value })}
-            />
-            <input
-              className="input"
-              value={s.url}
-              onChange={(e) => updateSite(i, { url: e.target.value })}
-            />
-            <input
-              className="input"
-              value={s.token ?? ''}
-              onChange={(e) => updateSite(i, { token: e.target.value })}
-            />
-            <div className="email-cell">
+        {sites.map((row, idx) => {
+          return (
+            <div className={styles.siteRow} key={idx}>
               <input
-                type="email"
-                className={`input ${!s.email ? 'input-error' : ''}`}
-                placeholder="cliente@dominio.com"
-                value={s.email ?? ''}
-                onChange={(e) => updateSite(i, { email: e.target.value })}
+                className={styles.input}
+                value={row.name}
+                onChange={(e) => patchRow(idx, { name: e.target.value })}
               />
-              <button className="btn btn-ghost" onClick={() => removeSite(i)}>
-                Eliminar
-              </button>
+              <input
+                className={styles.input}
+                value={row.url}
+                onChange={(e) => patchRow(idx, { url: e.target.value })}
+              />
+              <input
+                className={styles.input}
+                value={row.token ?? ''}
+                onChange={(e) => patchRow(idx, { token: e.target.value })}
+              />
+              <div className={styles.emailCell}>
+                <input
+                  type="email"
+                  className={`${styles.input} ${row.email ? '' : styles.inputError}`}
+                  placeholder="cliente@dominio.com"
+                  value={row.email ?? ''}
+                  onChange={(e) => patchRow(idx, { email: e.target.value })}
+                />
+                <button className={`${styles.btn} ${styles.btnGhost}`} onClick={() => removeRow(idx)}>
+                  Eliminar
+                </button>
+              </div>
             </div>
-          </div>
-        ))}
+          );
+        })}
 
-        <div className="card-actions">
-          <button className="btn btn-ghost" onClick={addSite}>
+        <div className={styles.cardActions}>
+          <button
+            className={`${styles.btn} ${styles.btnGhost}`}
+            onClick={() =>
+              setSites((prev) => [
+                ...prev,
+                {
+                  name: 'Nuevo',
+                  url: 'https://',
+                  token: '',
+                  email: '',
+                  invoiceFileName: null,
+                  invoiceFileBase64: null,
+                },
+              ])
+            }
+          >
             Añadir sitio
           </button>
-          <button className="btn btn-primary" disabled={busy} onClick={() => sites.forEach((_, idx) => doUpdate(idx))}>
+
+          <button
+            className={`${styles.btn} ${styles.btnPrimary}`}
+            disabled={busy}
+            onClick={() => sites.forEach((_, i) => runUpdate(i))}
+          >
             {busy ? 'Actualizando…' : 'Actualizar Todo'}
           </button>
         </div>
       </section>
 
       {/* Resultados */}
-      <section className="card card-stack">
-        <h2 className="section-title">Resultados</h2>
+      <section className={`${styles.card} ${styles.cardStack}`}>
+        <h2 className={styles.sectionTitle}>Resultados</h2>
 
-        <div className="results-wrapper">
-          <table className="results-table table">
+        <div className={styles.resultsWrapper}>
+          <table className={`${styles.resultsTable} table`}>
             <thead>
               <tr>
                 <th>Sitio</th>
@@ -501,11 +459,12 @@ export default function Page() {
               </tr>
             </thead>
             <tbody>
-              {sites.map((s, i) => {
-                const r = s.lastResult;
+              {sites.map((row, idx) => {
+                const r = row.lastResult;
                 return (
-                  <tr key={i}>
-                    <td>{s.name}</td>
+                  <tr key={idx}>
+                    <td>{row.name}</td>
+
                     <td>
                       {r ? (
                         <div className={styles.statusTag} data-status={r.status}>
@@ -514,37 +473,39 @@ export default function Page() {
                       ) : (
                         <span className={styles.muted}>—</span>
                       )}
-                      {r?.at && (
-                        <span className={styles.timestamp}>{dayjs(r.at).format('HH:mm')}</span>
-                      )}
+                      {r?.at && <span className={styles.timestamp}>{dayjs(r.at).format('HH:mm')}</span>}
                     </td>
+
                     <td className={styles.alignLeft}>
                       {r?.errors?.length ? (
                         <ul className={styles.errorList}>
-                          {r.errors.map((err, idx) => (
-                            <li key={idx}>{err}</li>
+                          {r.errors.map((e, i) => (
+                            <li key={i}>{e}</li>
                           ))}
                         </ul>
                       ) : (
                         <span className={styles.muted}>—</span>
                       )}
                     </td>
-                    <td>{renderReport(r)}</td>
+
+                    <td>{renderReportChip(r)}</td>
+
                     <td className={styles.alignLeft}>
-                      {s.lastSend ? (
-                        <div className={styles.sendStatus} data-status={s.lastSend.status}>
+                      {row.lastSend ? (
+                        <div className={styles.sendStatus} data-status={row.lastSend.status}>
                           <span>
-                            {s.lastSend.status === 'OK'
-                              ? `OK${s.lastSend.via ? ` · ${s.lastSend.via}` : ''}`
+                            {row.lastSend.status === 'OK'
+                              ? `OK${row.lastSend.via ? ` · ${row.lastSend.via}` : ''}`
                               : 'ERROR'}
                           </span>
-                          {s.lastSend.error && <p>{s.lastSend.error}</p>}
-                          <time>{dayjs(s.lastSend.at).format('HH:mm')}</time>
+                          {row.lastSend.error && <p>{row.lastSend.error}</p>}
+                          <time>{dayjs(row.lastSend.at).format('HH:mm')}</time>
                         </div>
                       ) : (
                         <span className={styles.muted}>—</span>
                       )}
                     </td>
+
                     <td className={styles.alignLeft}>
                       <div className={styles.invoiceCell}>
                         <label className={`${styles.btn} ${styles.btnGhost}`}>
@@ -553,12 +514,12 @@ export default function Page() {
                             className={styles.fileInput}
                             type="file"
                             accept="application/pdf"
-                            onChange={onPickInvoice(i)}
+                            onChange={onInvoiceChange(idx)}
                           />
                         </label>
                         <p className={styles.fileName}>
-                          {s.invoiceFileName ? (
-                            s.invoiceFileName
+                          {row.invoiceFileName ? (
+                            row.invoiceFileName
                           ) : (
                             <span className={styles.muted}>
                               <em>Ningún archivo seleccionado</em>
@@ -567,11 +528,12 @@ export default function Page() {
                         </p>
                       </div>
                     </td>
+
                     <td>
                       <button
                         className={`${styles.btn} ${styles.btnOutline}`}
                         disabled={busy}
-                        onClick={() => sendEmail(s, i)}
+                        onClick={() => sendEmail(row, idx)}
                       >
                         Enviar email
                       </button>
@@ -583,8 +545,10 @@ export default function Page() {
           </table>
         </div>
 
-        <div className="card-actions card-actions--end">
-          <button className="btn btn-primary" onClick={sendAll}>Enviar todos</button>
+        <div className={`${styles.cardActions} ${styles.cardActionsEnd}`}>
+          <button className={styles.btn + ' ' + styles.btnPrimary} onClick={sendAll}>
+            Enviar todos
+          </button>
         </div>
       </section>
     </main>
