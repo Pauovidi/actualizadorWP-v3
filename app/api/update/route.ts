@@ -1,63 +1,81 @@
 // app/api/update/route.ts
 import { NextRequest, NextResponse } from "next/server";
 
-/** Utils */
-function safeJson<T = any>(txt: string | null): T | null {
-  if (!txt) return null;
-  try { return JSON.parse(txt) as T; } catch { return null; }
+/* ============================================================
+   PLANTILLA APROBADA (CONGELADA) — NO MODIFICAR SIN VERSIONAR
+   Versión: v1.0.0-approved-2025-10-17
+   ============================================================ */
+
+type Step = { step?: string; ok?: boolean; msg?: string };
+type UpdateRow = { item: string; from?: string; to?: string };
+
+type ApprovedReportInput = {
+  site: { name: string; url: string };
+  statusOk: boolean;                // true => OK, false => ERROR
+  generatedAtISO: string;           // 2025-10-17T15:23:35Z
+  steps: Step[];
+  updates: UpdateRow[];
+  errors: string[];
+};
+
+function esc(s: unknown) {
+  return String(s ?? "")
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, "&#39;");
 }
 
-function b64DataUrl(html: string) {
-  const b64 = Buffer.from(html, "utf8").toString("base64");
-  return `data:text/html;base64,${b64}`;
+function fmtDateLocal(iso: string) {
+  // YYYY-MM-DD HH:mm:ss (igual que el ejemplo aprobado)
+  const d = new Date(iso);
+  const pad = (n: number) => String(n).padStart(2, "0");
+  const y = d.getFullYear();
+  const m = pad(d.getMonth() + 1);
+  const day = pad(d.getDate());
+  const hh = pad(d.getHours());
+  const mm = pad(d.getMinutes());
+  const ss = pad(d.getSeconds());
+  return `${y}-${m}-${day} ${hh}:${mm}:${ss}`;
 }
 
-type SiteIn = { name?: string; url?: string; token?: string; email?: string };
+function renderApprovedReport(input: ApprovedReportInput) {
+  const { site, statusOk, generatedAtISO } = input;
 
-// Diff versiones (como en el CLI): compara before/after y devuelve array de items cambiados
-function computeUpdates(before: Record<string,string>|null, after: Record<string,string>|null) {
-  const b = before || {};
-  const a = after || {};
-  const keys = Array.from(new Set([...Object.keys(b), ...Object.keys(a)])).sort();
-  const out: Array<{item:string; from?:string; to?:string}> = [];
-  for (const k of keys) {
-    const v1 = (b[k] ?? "").trim();
-    const v2 = (a[k] ?? "").trim();
-    if (v1 !== v2) out.push({ item: k, from: v1 || undefined, to: v2 || undefined });
-  }
-  return out;
-}
+  const stepsHtml = input.steps?.length
+    ? input.steps
+        .map((s) => {
+          const name = esc(s.step || "paso");
+          const okStr = s.ok ? "ok" : "error";
+          const msg = s.msg ? ` — <span class="muted">${esc(s.msg)}</span>` : "";
+          return `<li><strong>${name}</strong>: ${okStr} ${msg}</li>`;
+        })
+        .join("")
+    : "<li>—</li>";
 
-/** Plantilla aprobada (oscura, compacta) */
-function makeReportHtml(site: {name:string; url:string}, result: any) {
-  const status = String(result.status ?? "ok").toLowerCase();
-  const ok = status === "ok";
-  const steps = Array.isArray(result.steps) ? result.steps : [];
-  const errors = Array.isArray(result.errors) ? result.errors : (result.errors ? [String(result.errors)] : []);
-  const before = result.before && typeof result.before === "object" ? result.before : null;
-  const after  = result.after  && typeof result.after  === "object" ? result.after  : null;
-  const updates = computeUpdates(before, after);
-
-  const li = (arr: string[]) => arr.length ? arr.map(x=>`<li>${x}</li>`).join("") : `<li>—</li>`;
-  const liSteps = steps.length
-    ? steps.map((s:any)=>`<li><strong>${s.step || "paso"}</strong>: ${s.ok ? "ok" : "error"}${s.msg ? ` — <span class="muted">${s.msg}</span>`:""}</li>`).join("")
-    : `<li>—</li>`;
-
-  const rowsUpdates = updates.length
-    ? updates.map(u=>`
-      <tr>
-        <td>${u.item}</td>
-        <td class="muted">${u.from ?? "—"}</td>
-        <td>${u.to ?? "—"}</td>
-      </tr>`).join("")
+  const rowsUpdates = input.updates?.length
+    ? input.updates
+        .map(
+          (u) => `
+        <tr>
+          <td>${esc(u.item)}</td>
+          <td class="muted">${u.from ? esc(u.from) : "—"}</td>
+          <td>${u.to ? esc(u.to) : "—"}</td>
+        </tr>`
+        )
+        .join("")
     : `<tr><td colspan="3" class="muted">No hay cambios</td></tr>`;
 
-  const when = new Date().toISOString().replace("T"," ").slice(0,19);
+  const errorsHtml = input.errors?.length
+    ? input.errors.map((e) => `<li>${esc(e)}</li>`).join("")
+    : "<li>—</li>";
 
+  // HTML/CSS OSCURO CONGELADO (idéntico al aprobado)
   return `<!doctype html>
 <html lang="es">
 <meta charset="utf-8">
-<title>Informe · ${site.name}</title>
+<title>Informe · ${esc(site.name)}</title>
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <style>
   :root {
@@ -81,24 +99,24 @@ function makeReportHtml(site: {name:string; url:string}, result: any) {
 </style>
 <div class="wrap">
   <h1>Informe de actualización</h1>
-  <p class="muted">Generado: <time>${when}</time></p>
+  <p class="muted">Generado: <time>${fmtDateLocal(generatedAtISO)}</time></p>
 
   <div class="card">
     <div class="grid">
       <div>
         <h2>Sitio</h2>
-        <p><strong>${site.name}</strong><br><a href="${site.url}">${site.url}</a></p>
+        <p><strong>${esc(site.name)}</strong><br><a href="${esc(site.url)}">${esc(site.url)}</a></p>
       </div>
       <div>
         <h2>Estado</h2>
-        <p><span class="status" data-ok="${ok}">${ok ? "OK" : "ERROR"}</span></p>
+        <p><span class="status" data-ok="${statusOk ? "true" : "false"}">${statusOk ? "OK" : "ERROR"}</span></p>
       </div>
     </div>
   </div>
 
   <div class="card">
     <h2>Pasos ejecutados</h2>
-    <ul>${liSteps}</ul>
+    <ul>${stepsHtml}</ul>
   </div>
 
   <div class="card">
@@ -111,18 +129,57 @@ function makeReportHtml(site: {name:string; url:string}, result: any) {
 
   <div class="card">
     <h2>Errores</h2>
-    <ul>${li(errors.map(String))}</ul>
+    <ul>${errorsHtml}</ul>
   </div>
 </div>
 </html>`;
 }
 
-/** Handler App Router */
+/* ============================
+   Utils de la API
+   ============================ */
+
+function safeJson<T = any>(txt: string | null): T | null {
+  if (!txt) return null;
+  try {
+    return JSON.parse(txt) as T;
+  } catch {
+    return null;
+  }
+}
+
+function computeUpdates(
+  before: Record<string, string> | null,
+  after: Record<string, string> | null
+): UpdateRow[] {
+  const b = before || {};
+  const a = after || {};
+  const keys = Array.from(new Set([...Object.keys(b), ...Object.keys(a)])).sort();
+  const out: UpdateRow[] = [];
+  for (const k of keys) {
+    const v1 = (b[k] ?? "").trim();
+    const v2 = (a[k] ?? "").trim();
+    if (v1 !== v2) out.push({ item: k, from: v1 || undefined, to: v2 || undefined });
+  }
+  return out;
+}
+
+function toDataUrlHtml(html: string) {
+  const b64 = Buffer.from(html, "utf8").toString("base64");
+  return `data:text/html;base64,${b64}`;
+}
+
+/* ============================
+   Handler App Router
+   ============================ */
+
+export const runtime = "nodejs";
+
 export async function POST(req: NextRequest) {
   try {
-    const body = await req.text();
-    const parsed = safeJson<{sites: SiteIn[]}>(body) || { sites: [] };
-    const sites = Array.isArray(parsed.sites) ? parsed.sites : [];
+    const bodyTxt = await req.text();
+    const payload = safeJson<{ sites: Array<{ name?: string; url?: string; token?: string; email?: string }> }>(bodyTxt) || { sites: [] };
+    const sites = Array.isArray(payload.sites) ? payload.sites : [];
 
     if (!sites.length) {
       return NextResponse.json({ ok: false, error: "Missing sites" }, { status: 400 });
@@ -130,12 +187,11 @@ export async function POST(req: NextRequest) {
 
     const results: any[] = [];
 
-    for (const raw of sites) {
+    for (const s of sites) {
       const site = {
-        name: String(raw?.name ?? "Sitio"),
-        url:  String(raw?.url ?? "").replace(/\/+$/,""),
-        token:String(raw?.token ?? ""),
-        email:String(raw?.email ?? ""),
+        name: String(s?.name ?? "Sitio"),
+        url: String(s?.url ?? "").replace(/\/+$/, ""),
+        token: String(s?.token ?? ""),
       };
 
       if (!site.url || !site.token) {
@@ -143,13 +199,12 @@ export async function POST(req: NextRequest) {
         continue;
       }
 
+      // Llamada al WP (misma lógica que el CLI): header X-MAINT-TOKEN, sin body
       const endpoint = `${site.url}/wp-json/maint-agent/v1/update`;
-
-      // === Llamada al WP (igual que el CLI): header X-MAINT-TOKEN, sin body ===
       const resp = await fetch(endpoint, {
         method: "POST",
         headers: {
-          "Accept": "application/json",
+          Accept: "application/json",
           "User-Agent": "wp-maint-agent/ui",
           "X-MAINT-TOKEN": site.token,
         },
@@ -158,36 +213,45 @@ export async function POST(req: NextRequest) {
       const txt = await resp.text();
       const data: any = safeJson(txt) ?? {};
 
-      // Normalizamos como en el CLI
-      const status = String(data.status ?? (resp.ok ? "ok" : "error")).toLowerCase();
-      const norm = {
-        status,
-        steps: data.steps ?? [],
-        errors: data.errors ?? (resp.ok ? [] : [`HTTP ${resp.status}`]),
-        before: data.before ?? null,
-        after:  data.after ?? null,
-      };
+      const statusStr = String(data?.status ?? (resp.ok ? "ok" : "error")).toLowerCase();
+      const statusOk = statusStr === "ok";
 
-      // Generar HTML y data URL
-      const html = makeReportHtml({ name: site.name, url: site.url }, norm);
-      const reportUrl = b64DataUrl(html);
-      const reportFileName = `informe-${new Date().toISOString().slice(0,10)}.html`;
+      const steps: Step[] = Array.isArray(data?.steps) ? data.steps : [];
+      const before = data?.before && typeof data.before === "object" ? (data.before as Record<string, string>) : null;
+      const after = data?.after && typeof data.after === "object" ? (data.after as Record<string, string>) : null;
+
+      const updates = computeUpdates(before, after);
+
+      const errors: string[] = Array.isArray(data?.errors)
+        ? data.errors.map((x: any) => String(x))
+        : data?.errors
+        ? [String(data.errors)]
+        : [];
+
+      // Render con la PLANTILLA APROBADA (congelada)
+      const html = renderApprovedReport({
+        site: { name: site.name, url: site.url },
+        statusOk,
+        generatedAtISO: new Date().toISOString(),
+        steps,
+        updates,
+        errors,
+      });
+
+      const reportUrl = toDataUrlHtml(html);
+      const reportFileName = `informe-${new Date().toISOString().slice(0, 10)}.html`;
 
       results.push({
-        status: status === "ok" ? "OK" : "ERROR",
-        errors: Array.isArray(norm.errors) ? norm.errors.map(String) : (norm.errors ? [String(norm.errors)] : []),
+        status: statusOk ? "OK" : "ERROR",
+        errors,
         reportUrl,
         reportFileName,
-        message: data.notes || undefined,
       });
     }
 
     return NextResponse.json({ ok: true, results }, { status: 200 });
-  } catch (err: any) {
-    console.error("update api error:", err);
-    return NextResponse.json({ ok: false, error: String(err?.message || err) }, { status: 500 });
+  } catch (e: any) {
+    console.error("update api error:", e);
+    return NextResponse.json({ ok: false, error: String(e?.message || e) }, { status: 500 });
   }
 }
-
-// (Opcional) fuerza runtime Node para Buffer
-export const runtime = "nodejs";
