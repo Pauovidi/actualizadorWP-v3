@@ -23,7 +23,7 @@ async function getLogoCidAttachment(req: Request) {
       content: buf,
       contentType: ct,
       cid: "devestial-logo",
-    };
+    } as const;
   } catch {
     return null;
   }
@@ -38,6 +38,8 @@ function toAbs(reportUrl: string | null, req: Request) {
     return null;
   }
 }
+
+const FROM = "pau@devestial.com";
 
 export async function POST(req: Request) {
   try {
@@ -61,8 +63,7 @@ export async function POST(req: Request) {
     }
 
     const secure =
-      process.env.MAIL_SECURE === "1" ||
-      process.env.MAIL_PORT === "465";
+      process.env.MAIL_SECURE === "1" || process.env.MAIL_PORT === "465";
 
     const transporter = nodemailer.createTransport({
       host: process.env.MAIL_HOST!,
@@ -71,18 +72,31 @@ export async function POST(req: Request) {
       auth: { user: process.env.MAIL_USER!, pass: process.env.MAIL_PASS! },
     });
 
-    const abs = toAbs(reportUrl, req);
+    // === Preparar adjuntos ===
+    const nmAttachments: any[] = [];
+
+    // 1) Informe HTML desde data URL o desde URL absoluta/relativa
     let reportHtml: string | null = null;
-    if (abs) {
-      try {
-        const response = await fetch(abs, { cache: "no-store" });
-        reportHtml = response.ok ? await response.text() : null;
-      } catch {
-        reportHtml = null;
+    if (typeof reportUrl === "string" && reportUrl.length) {
+      if (reportUrl.startsWith("data:text/html;base64,")) {
+        try {
+          const base64 = reportUrl.split(",")[1] || "";
+          reportHtml = Buffer.from(base64, "base64").toString("utf8");
+        } catch {
+          reportHtml = null;
+        }
+      } else {
+        const abs = toAbs(reportUrl, req);
+        if (abs) {
+          try {
+            const response = await fetch(abs, { cache: "no-store" });
+            reportHtml = response.ok ? await response.text() : null;
+          } catch {
+            reportHtml = null;
+          }
+        }
       }
     }
-
-    const nmAttachments: any[] = [];
     if (reportHtml) {
       nmAttachments.push({
         filename: "informe.html",
@@ -91,6 +105,7 @@ export async function POST(req: Request) {
       });
     }
 
+    // 2) Adjuntos extra (p.ej. factura PDF)
     for (const attachment of attachments as any[]) {
       if (attachment?.contentBase64) {
         nmAttachments.push({
@@ -106,23 +121,25 @@ export async function POST(req: Request) {
       }
     }
 
-    const intro =
-      html ||
-      'Hola. <br>Adjunto el informe de actualización de tu web, así como la fca. correspondiente a este mes. <br>Un saludo.';
+    // 3) Logo inline (si está disponible)
     const logoCid = await getLogoCidAttachment(req);
     if (logoCid) nmAttachments.push(logoCid);
 
+    // === Cuerpo del email (sin enlace “Abrir informe en el navegador”) ===
+    const intro =
+      html ||
+      "Hola. <br>Adjunto el informe de actualización de tu web, así como la fca. correspondiente a este mes. <br>Un saludo.";
+
     const htmlBody =
       intro +
-      (abs
-        ? `<p><a href="${abs}">Abrir informe en el navegador</a></p>`
-        : "") +
       `<div style="margin-top:12px">
-     <img src="cid:devestial-logo" alt="Devestial" style="height:40px;display:block;opacity:.95">
-   </div>`;
+         <img src="cid:devestial-logo" alt="Devestial" style="height:40px;display:block;opacity:.95">
+       </div>`;
 
     const info = await transporter.sendMail({
-      from: process.env.MAIL_FROM!,
+      from: FROM,         // <- remitente fijo
+      sender: FROM,       // <- envelope/sender
+      replyTo: FROM,      // <- respuestas a
       to: recipients,
       subject: subject || "Informe",
       html: htmlBody,
@@ -137,3 +154,4 @@ export async function POST(req: Request) {
     );
   }
 }
+
