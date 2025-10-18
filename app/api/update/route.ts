@@ -16,7 +16,8 @@ type WPResult = {
   notes?: string;
 };
 
-// === Plantilla (versión aprobada) SIN bloque de “Notas” ni botón lateral ===
+// === Plantilla (versión aprobada) SIN bloque lateral de “Notas” ===
+// + Nuevo estado visual .info para “Sin cambios”
 const APPROVED_TEMPLATE = `<!doctype html>
 <html lang="es">
 <head>
@@ -43,6 +44,7 @@ const APPROVED_TEMPLATE = `<!doctype html>
     .status{display:inline-flex;align-items:center;gap:8px;font-weight:700}
     .dot{width:10px;height:10px;border-radius:50%}
     .ok .dot{background:var(--ok)} .warn .dot{background:var(--warn)} .err .dot{background:var(--err)}
+    .info .dot{background:var(--muted)} /* estado neutro: SIN CAMBIOS */
     table{width:100%;border-collapse:collapse;border:1px solid var(--line);border-radius:12px;overflow:hidden}
     th,td{padding:12px 14px;border-bottom:1px solid var(--line);text-align:left}
     th{color:var(--muted);font-weight:600;background:var(--panel)}
@@ -154,10 +156,9 @@ function statusToClassText(statusOk: boolean, warningsCount: number, errorsCount
   return { klass: "ok", text: "OK" };
 }
 
-// Sugerencias sin “miniaturas” jamás
+// Sugerencias sin “miniaturas”
 const suggestionFor = (type: "warn" | "error", msg: string) => {
   const m = msg || "";
-  // Si el mensaje menciona miniaturas, neutralizamos la sugerencia
   if (/miniatura/i.test(m) || /thumbnail/i.test(m)) return "Revisión manual";
   return type === "warn" ? "Revisión manual" : "Revisar logs o reintentar desde panel/CLI";
 };
@@ -232,11 +233,15 @@ export async function POST(req: NextRequest) {
       const warnings = pickArray(data?.warnings);
       const { klass, text } = statusToClassText(statusOk, warnings.length, errors.length);
 
-      // Filas Detalles
+      // Filas Detalles — SIN CAMBIOS = INFO (gris)
       const classify = (k: string, from: string, to: string) => {
-        if (from !== to) return { cls: "ok", label: "OK", note: "Actualización completada." };
-        return { cls: "warn", label: "WARN", note: "Sin cambios (ya estaba al día)." };
+        if (from !== to) {
+          return { cls: "ok",   label: "OK",          note: "Actualización completada." };
+        }
+        return { cls: "info", label: "Sin cambios", note: "Ya estaba al día." };
+        // si lo quieres verde: return { cls: "ok", label: "OK", note: "Sin cambios (ya estaba al día)." };
       };
+
       const detailsRowsHtml = diff.rows.length
         ? diff.rows.map(r => {
             const { cls, label, note } = classify(r.item, r.from, r.to);
@@ -250,7 +255,7 @@ export async function POST(req: NextRequest) {
           }).join("\n")
         : `<tr><td colspan="5" class="small">No se detectaron elementos.</td></tr>`;
 
-      // Filas Incidencias (sin miniaturas en sugerencias)
+      // Filas Incidencias (solo las reales; sin “miniaturas” en sugerencias)
       const issueWarnRows = warnings.map((w) => `<tr>
   <td><span class="status warn"><span class="dot"></span>WARN</span></td>
   <td>${htmlEscape(w)}</td>
