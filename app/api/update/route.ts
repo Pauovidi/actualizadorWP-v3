@@ -108,7 +108,7 @@ const APPROVED_TEMPLATE = `<!doctype html>
       </table>
     </section>
 
-    <p class="small" style="margin:18px 4px 0">© Actualizador WP — Informe generado automáticamente.</p>
+    <p class="small" style="margin:18px 4px 0">© Devestial</p>
   </div>
 
   <script>
