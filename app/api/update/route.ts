@@ -301,4 +301,18 @@ export async function POST(req: NextRequest) {
   } catch (e: any) {
     return NextResponse.json({ ok: false, error: String(e?.message || e) }, { status: 500 });
   }
+
+  const html = data?.htmlReport || data?.report || "";
+  const filename = data?.reportFileName || `informe-${new Date().toISOString().slice(0, 10)}.html`;
+  const reportUrl = html ? `data:text/html;base64,${Buffer.from(html, "utf8").toString("base64")}` : null;
+
+  return {
+    site: siteName,
+    status: mapStatus(data?.status),
+    errors: Array.isArray(data?.errors) ? data.errors.length : 0,
+    message: data?.message || null,
+    reportUrl,
+    reportFileName: filename,
+    lastSentAt: null,
+  };
 }
