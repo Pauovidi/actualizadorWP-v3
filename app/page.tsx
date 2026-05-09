@@ -16,6 +16,7 @@ type LastResult = {
 type LastSend = {
   status: 'OK' | 'ERROR';
   via?: string;
+  correlationId?: string;
   error?: string;
   at: string;
 } | null;
@@ -51,6 +52,18 @@ function normalizeUrl(u?: string) {
   const t = u.trim();
   if (t.startsWith('http://') || t.startsWith('https://')) return t;
   return `https://${t.replace(/^www\./i, '')}`;
+}
+
+function makeSendKey(row: SiteRow, to: string, reportUrl: string | null) {
+  return [
+    'send-v1',
+    row.name || 'sitio',
+    to,
+    row.invoiceFileName || '',
+    row.invoiceFileBase64?.length || 0,
+    row.invoiceFileBase64?.slice(0, 24) || '',
+    reportUrl?.slice(0, 64) || '',
+  ].join('|');
 }
 
 export default function Page() {
@@ -319,17 +332,24 @@ export default function Page() {
             'Hola.<br>Adjunto el informe de actualización de tu web, así como la fca. correspondiente a este mes.<br>Un saludo.',
           reportUrl,
           attachments: atts,
+          idempotencyKey: makeSendKey(row, to, reportUrl),
         }),
       });
 
       const out = await resp.json().catch(() => null);
       if (!resp.ok || !out?.ok) {
-        throw new Error(out?.error || `${resp.status} ${resp.statusText}`);
+        const suffix = out?.correlationId ? ` (ID: ${out.correlationId})` : '';
+        throw new Error(`${out?.error || `${resp.status} ${resp.statusText}`}${suffix}`);
       }
 
       const via = out?.id ? `SMTP · ${out.id}` : 'SMTP';
       patchRow(idx, {
-        lastSend: { status: 'OK', via, at: new Date().toISOString() },
+        lastSend: {
+          status: 'OK',
+          via,
+          correlationId: out?.correlationId,
+          at: new Date().toISOString(),
+        },
       });
       alert(`Enviado ${siteName}: OK`);
     } catch (e: any) {
@@ -498,6 +518,7 @@ export default function Page() {
                               ? `OK${row.lastSend.via ? ` · ${row.lastSend.via}` : ''}`
                               : 'ERROR'}
                           </span>
+                          {row.lastSend.correlationId && <p>ID: {row.lastSend.correlationId}</p>}
                           {row.lastSend.error && <p>{row.lastSend.error}</p>}
                           <time>{dayjs(row.lastSend.at).format('HH:mm')}</time>
                         </div>
@@ -546,7 +567,7 @@ export default function Page() {
         </div>
 
         <div className={`${styles.cardActions} ${styles.cardActionsEnd}`}>
-          <button className={styles.btn + ' ' + styles.btnPrimary} onClick={sendAll}>
+          <button className={styles.btn + ' ' + styles.btnPrimary} disabled={busy} onClick={sendAll}>
             Enviar todos
           </button>
         </div>
