@@ -240,6 +240,10 @@ export async function POST(req: Request) {
       from: emailConfig.from,
       sender: emailConfig.envelopeFrom,
       replyTo: emailConfig.replyTo,
+      envelope: {
+        from: emailConfig.envelopeFrom,
+        to: recipientsList,
+      },
       to: recipients,
       subject: subject || "Informe",
       html: htmlBody,
