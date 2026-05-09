@@ -13,7 +13,7 @@
 ## DEMO
 - Autocompleta **token falso** cuando escribes una URL.
 - Genera **informes simulados** y puede hacer **capturas** si `SCREENSHOT_ENABLED=1`.
-- Botones por sitio: **Cargar factura** (guarda local, no servidor) y **Enviar email** (usa Resend).
+- Botones por sitio: **Cargar factura** (guarda local, no servidor) y **Enviar email** (usa SMTP con Nodemailer).
 - **Enviar todos**: solo envía los sitios que **tienen factura**; avisa de los que no.
 
 ## Variables de entorno
@@ -22,13 +22,26 @@ DEMO_MODE=1
 NEXT_PUBLIC_DEMO=1
 NEXT_PUBLIC_SHOW_SERVER_BUTTONS=0
 SCREENSHOT_ENABLED=1
-RESEND_API_KEY=...
-EMAIL_FROM="Actualitzador <no-reply@tu-dominio.com>"
-EMAIL_TO_DEFAULT=...
+PUBLIC_BASE_URL=https://actualizador-wp-v3.vercel.app
+MAIL_HOST=smtp.example.com
+MAIL_PORT=587
+MAIL_SECURE=0
+MAIL_USER=...
+MAIL_PASS=...
+MAIL_FROM="Actualitzador WP <no-reply@tu-dominio.com>"
+MAIL_REPLY_TO="soporte@tu-dominio.com"
+MAIL_ENVELOPE_FROM=no-reply@tu-dominio.com
 ```
 
 ### Campo de email por sitio
-En la parte superior ahora verás la columna **Email destino**. Si se deja vacío, el backend usará `EMAIL_TO_DEFAULT`.
+En la parte superior verás la columna **Email destino**. Es obligatorio para enviar: el backend no usa destinatarios por defecto.
+
+### Envío de emails
+- El envío real está en `app/api/send/route.ts`.
+- El transporte SMTP está centralizado en `lib/email.ts`.
+- Cada envío devuelve `correlationId` y `messageId`; usa ese `correlationId` para buscar logs en Vercel.
+- Cada email incluye versión HTML y `text/plain`, y bloquea duplicados equivalentes durante una ventana corta.
+- No se aceptan adjuntos remotos por URL; la UI envía facturas como base64 y el informe generado por la app.
 
 ## Cómo conectar con tu repositorio de GitHub
 Realiza estos pasos **desde la raíz del proyecto** (la carpeta donde está este archivo `README.md`).
