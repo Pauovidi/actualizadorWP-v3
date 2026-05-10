@@ -92,9 +92,18 @@ La herramienta:
 - exige `EMAIL_TEST_TOKEN`;
 - rechaza `VERCEL_ENV=production`;
 - limita la prueba a 4 destinatarios manuales;
-- no acepta adjuntos;
+- permite comparar estos modos: `sin_adjuntos`, `informe_html_adjunto`, `pdf_ficticio_adjunto`, `informe_en_cuerpo`;
+- genera cualquier adjunto en memoria, sin Blob ni filesystem persistente;
 - no llama a `/api/update`, `/api/sites`, `/api/invoices`, Blob, Neon ni cron;
-- registra `email_test_attempt`, `email_test_success` y `email_test_error`.
+- registra `email_test_attempt`, `email_test_success` y `email_test_error` con `mode`, `attachmentCount` y `attachmentBytes`.
+
+Comparativa recomendada:
+
+1. Enviar a los mismos buzones con modo `sin_adjuntos`.
+2. Repetir con `informe_html_adjunto`.
+3. Repetir con `pdf_ficticio_adjunto`.
+4. Repetir con `informe_en_cuerpo`.
+5. Para cada email, revisar inbox/spam, headers completos, SPF, DKIM, DMARC, `Return-Path`, `X-ActualizadorWP-Correlation-ID`, `X-ActualizadorWP-Test-Mode`, `messageId`, `accepted`, `rejected`, `attachmentCount`, `attachmentTypes` y `attachmentBytes`.
 
 ## Checklist externo
 

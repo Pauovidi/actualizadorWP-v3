@@ -86,4 +86,4 @@ EMAIL_TEST_TOKEN=<token-temporal-largo>
 NEXT_PUBLIC_ENABLE_EMAIL_TEST_PANEL=true
 ```
 
-El token no es público: se introduce manualmente en la UI. `NEXT_PUBLIC_ENABLE_EMAIL_TEST_PANEL` solo muestra el panel y no autoriza envíos. La prueba permite hasta 4 destinatarios controlados, envía un email ficticio sin adjuntos y no toca webs, facturas, Blob, Neon ni cron.
+El token no es público: se introduce manualmente en la UI. `NEXT_PUBLIC_ENABLE_EMAIL_TEST_PANEL` solo muestra el panel y no autoriza envíos. La prueba permite hasta 4 destinatarios controlados y compara `sin_adjuntos`, `informe_html_adjunto`, `pdf_ficticio_adjunto` e `informe_en_cuerpo`; todo lo adjunto se genera en memoria y no toca webs, facturas reales, Blob, Neon ni cron.

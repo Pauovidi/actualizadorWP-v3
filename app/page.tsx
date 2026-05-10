@@ -37,10 +37,14 @@ type SendResult = {
 type EmailTestResult = {
   recipient: string;
   ok: boolean;
+  mode?: string;
   correlationId?: string;
   id?: string;
   accepted?: string[];
   rejected?: string[];
+  attachmentCount?: number;
+  attachmentTypes?: string[];
+  attachmentBytes?: number;
   error?: string;
 };
 
@@ -80,6 +84,7 @@ export default function Page() {
   const [emailTestEnabled, setEmailTestEnabled] = useState(EMAIL_TEST_PANEL_INITIAL);
   const [emailTestToken, setEmailTestToken] = useState('');
   const [emailTestRecipients, setEmailTestRecipients] = useState('');
+  const [emailTestMode, setEmailTestMode] = useState('sin_adjuntos');
   const [emailTestBusy, setEmailTestBusy] = useState(false);
   const [emailTestResults, setEmailTestResults] = useState<EmailTestResult[]>([]);
   const [emailTestError, setEmailTestError] = useState('');
@@ -655,6 +660,7 @@ export default function Page() {
         },
         body: JSON.stringify({
           recipients,
+          mode: emailTestMode,
           idempotencyKey: `manual-email-test:${Date.now()}:${recipients.join('|')}`,
         }),
       });
@@ -705,6 +711,20 @@ export default function Page() {
             />
           </label>
           <label className={styles.emailTestLabel}>
+            <span>Modo de prueba</span>
+            <select
+              className={styles.select}
+              value={emailTestMode}
+              onChange={(event) => setEmailTestMode(event.target.value)}
+              disabled={emailTestBusy}
+            >
+              <option value="sin_adjuntos">sin_adjuntos</option>
+              <option value="informe_html_adjunto">informe_html_adjunto</option>
+              <option value="pdf_ficticio_adjunto">pdf_ficticio_adjunto</option>
+              <option value="informe_en_cuerpo">informe_en_cuerpo</option>
+            </select>
+          </label>
+          <label className={styles.emailTestLabel}>
             <span>Destinatarios de prueba</span>
             <textarea
               className={styles.emailTestTextarea}
@@ -736,12 +756,16 @@ export default function Page() {
                     <div className={result.ok ? styles.emailTestOk : styles.emailTestErrorText}>
                       {result.ok ? 'Enviado' : result.error || 'Error'}
                     </div>
+                    {result.mode && <div className={styles.emailTestMode}>modo: {result.mode}</div>}
                   </div>
                   <div className={styles.emailTestMeta}>
                     {result.correlationId && <span>correlationId: {result.correlationId}</span>}
                     {result.id && <span>messageId: {result.id}</span>}
                     {result.accepted && <span>accepted: {result.accepted.length}</span>}
                     {result.rejected && <span>rejected: {result.rejected.length}</span>}
+                    {typeof result.attachmentCount === 'number' && <span>attachmentCount: {result.attachmentCount}</span>}
+                    {result.attachmentTypes && <span>attachmentTypes: {result.attachmentTypes.join(', ') || 'none'}</span>}
+                    {typeof result.attachmentBytes === 'number' && <span>attachmentBytes: {result.attachmentBytes}</span>}
                   </div>
                 </div>
               ))}
