@@ -75,3 +75,14 @@ curl -i -X POST "$PREVIEW_URL/api/send" \
 ```
 
 La respuesta esperada para payload vacío es `400` con `correlationId`.
+
+### Prueba temporal de entregabilidad
+
+En previews puede habilitarse el panel **Prueba de emails** con:
+
+```env
+ENABLE_EMAIL_TEST_PANEL=true
+EMAIL_TEST_TOKEN=<token-temporal-largo>
+```
+
+El token no es público: se introduce manualmente en la UI. La prueba permite hasta 4 destinatarios controlados, envía un email ficticio sin adjuntos y no toca webs, facturas, Blob, Neon ni cron.

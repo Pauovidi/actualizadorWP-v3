@@ -65,6 +65,36 @@ cmd /c vercel curl /api/send --deployment <preview-url> -- --include --request P
 
 La ultima llamada debe devolver `400` con `correlationId` y no debe crear logs 5xx.
 
+## Herramienta temporal de prueba aislada
+
+El preview puede habilitar un panel temporal "Prueba de emails" sin tocar clientes, webs, facturas, Blob, Neon ni cron.
+
+Variables necesarias en Preview:
+
+```env
+ENABLE_EMAIL_TEST_PANEL=true
+EMAIL_TEST_TOKEN=<token-temporal-largo>
+```
+
+El token no debe ser `NEXT_PUBLIC_*`; el operador lo introduce manualmente en el panel y se envia solo como header `x-email-test-token`.
+
+Validaciones:
+
+```bash
+vercel curl /api/send-test --deployment <preview-url>
+cmd /c vercel curl /api/send-test --deployment <preview-url> -- --include --request POST --header "Content-Type: application/json" --header "x-email-test-token: <token>" --data "{\"recipients\":[\"test@example.com\"]}"
+```
+
+La herramienta:
+
+- solo funciona si `ENABLE_EMAIL_TEST_PANEL=true`;
+- exige `EMAIL_TEST_TOKEN`;
+- rechaza `VERCEL_ENV=production`;
+- limita la prueba a 4 destinatarios manuales;
+- no acepta adjuntos;
+- no llama a `/api/update`, `/api/sites`, `/api/invoices`, Blob, Neon ni cron;
+- registra `email_test_attempt`, `email_test_success` y `email_test_error`.
+
 ## Checklist externo
 
 - SPF autoriza el host SMTP real.
