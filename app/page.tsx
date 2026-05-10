@@ -45,6 +45,7 @@ type EmailTestResult = {
 };
 
 const DEMO = process.env.NEXT_PUBLIC_DEMO === '1';
+const EMAIL_TEST_PANEL_INITIAL = process.env.NEXT_PUBLIC_ENABLE_EMAIL_TEST_PANEL === 'true';
 
 const arrayBufferToBase64 = (buffer: ArrayBuffer) => {
   const globalBuffer = (globalThis as unknown as {
@@ -76,7 +77,7 @@ export default function Page() {
   const [hydrated, setHydrated] = useState(false);
   const [invoiceMap, setInvoiceMap] = useState<Record<string, { file_name: string; blob_url: string }>>({});
   const [selectedIdx, setSelectedIdx] = useState<Set<number>>(() => new Set());
-  const [emailTestEnabled, setEmailTestEnabled] = useState(false);
+  const [emailTestEnabled, setEmailTestEnabled] = useState(EMAIL_TEST_PANEL_INITIAL);
   const [emailTestToken, setEmailTestToken] = useState('');
   const [emailTestRecipients, setEmailTestRecipients] = useState('');
   const [emailTestBusy, setEmailTestBusy] = useState(false);

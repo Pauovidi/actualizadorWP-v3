@@ -74,9 +74,10 @@ Variables necesarias en Preview:
 ```env
 ENABLE_EMAIL_TEST_PANEL=true
 EMAIL_TEST_TOKEN=<token-temporal-largo>
+NEXT_PUBLIC_ENABLE_EMAIL_TEST_PANEL=true
 ```
 
-El token no debe ser `NEXT_PUBLIC_*`; el operador lo introduce manualmente en el panel y se envia solo como header `x-email-test-token`.
+El token no debe ser `NEXT_PUBLIC_*`; el operador lo introduce manualmente en el panel y se envia solo como header `x-email-test-token`. `NEXT_PUBLIC_ENABLE_EMAIL_TEST_PANEL` no es secreto: solo permite que el HTML del preview muestre el panel desde la primera carga.
 
 Validaciones:
 
