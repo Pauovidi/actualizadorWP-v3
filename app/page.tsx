@@ -29,6 +29,7 @@ type UpdateResult = {
 type SendResult = {
   status: 'OK' | 'ERROR';
   via?: string;
+  correlationId?: string;
   error?: string;
   at: string;
 };
@@ -293,6 +294,9 @@ export default function Page() {
     try {
       const today = dayjs().format('YYYY-MM-DD');
       const subject = `Informe${invoicePayload ? ' y factura' : ''} — ${email} (${currentPeriod})`;
+      const idempotencyKey = `group:${currentPeriod}:${email}:${reports
+        .map((report) => report.fileName)
+        .join('|')}:${invoicePayload?.fileName || 'no-invoice'}`;
 
       const res = await fetch('/api/send', {
         method: 'POST',
@@ -304,6 +308,7 @@ export default function Page() {
           reports,
           invoice: invoicePayload,
           subject,
+          idempotencyKey,
           errors: errors.length ? errors : undefined,
         }),
       });
@@ -311,8 +316,8 @@ export default function Page() {
       const json = await res.json();
       if (!json.ok) throw new Error(json.error || 'Fallo desconocido');
 
-      setLastSendForEmail(email, { status: 'OK', via: json.via, at: today });
-      alert(`Email enviado (${json.via || 'ok'}) a ${email}`);
+      setLastSendForEmail(email, { status: 'OK', via: json.via, correlationId: json.correlationId, at: today });
+      alert(`Email enviado (${json.via || 'ok'}) a ${email}${json.correlationId ? ` · ${json.correlationId}` : ''}`);
     } catch (e: any) {
       setLastSendForEmail(email, { status: 'ERROR', error: e?.message || String(e), at: dayjs().format('YYYY-MM-DD') });
       alert(e?.message || String(e));
@@ -525,6 +530,7 @@ export default function Page() {
       const pdfBlob = await (await fetch(site.invoiceUrl)).blob();
       const pdfBuffer = await pdfBlob.arrayBuffer();
       const pdfBase64 = arrayBufferToBase64(pdfBuffer);
+      const idempotencyKey = `single:${today}:${site.email || ''}:${site.url}:${site.lastResult?.reportFileName || 'no-report'}:${site.invoiceName || 'factura.pdf'}`;
 
       const res = await fetch('/api/send', {
         method: 'POST',
@@ -542,6 +548,7 @@ export default function Page() {
             base64: pdfBase64,
           },
           subject: `Informe y factura — ${site.name} (${today})`,
+          idempotencyKey,
         }),
       });
 
@@ -551,10 +558,11 @@ export default function Page() {
         lastSend: {
           status: 'OK',
           via: json.via,
+          correlationId: json.correlationId,
           at: new Date().toISOString(),
         },
       });
-      alert(`Enviado ${site.name}: OK`);
+      alert(`Enviado ${site.name}: OK${json.correlationId ? ` · ${json.correlationId}` : ''}`);
     } catch (e: any) {
       updateSite(i, {
         lastSend: {

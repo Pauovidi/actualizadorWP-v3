@@ -3,7 +3,7 @@
 ## DEMO
 - Autocompleta **token falso** cuando escribes una URL.
 - Genera **informes simulados** y puede hacer **capturas** si `SCREENSHOT_ENABLED=1`.
-- Botones por sitio: **Cargar factura** (guarda local, no servidor) y **Enviar email** (usa Resend).
+- Botones por sitio: **Cargar factura** (guarda local, no servidor) y **Enviar email** (usa SMTP con Nodemailer).
 - **Enviar todos**: solo envía los sitios que **tienen factura**; avisa de los que no.
 
 ## Variables
@@ -12,8 +12,14 @@ DEMO_MODE=1
 NEXT_PUBLIC_DEMO=1
 NEXT_PUBLIC_SHOW_SERVER_BUTTONS=0
 SCREENSHOT_ENABLED=1
-RESEND_API_KEY=...
-EMAIL_FROM="Actualitzador <no-reply@tu-dominio.com>"
+MAIL_HOST=smtp.example.com
+MAIL_PORT=587
+MAIL_SECURE=0
+MAIL_USER=...
+MAIL_PASS=...
+MAIL_FROM="Actualizador WP <no-reply@tu-dominio.com>"
+MAIL_REPLY_TO="soporte@tu-dominio.com"
+MAIL_ENVELOPE_FROM=no-reply@tu-dominio.com
 EMAIL_TO_DEFAULT=...
 ```
 
@@ -50,3 +56,22 @@ Si trabajas en otra rama, sustituye `work` por el nombre de la rama que quieras 
 
 ## Comandos de verificación
 - `npm run lint`: ejecuta las reglas de ESLint recomendadas por Next.js para detectar problemas comunes antes de hacer deploy.
+
+## Email deliverability
+
+- El envío real está en `app/api/send/route.ts`.
+- El transporte SMTP/Nodemailer está centralizado en `lib/email.ts`.
+- Cada respuesta relevante incluye `correlationId`; úsalo para buscar `email_send_attempt`, `email_send_success`, `email_send_error` o `email_send_duplicate_blocked` en logs de Vercel.
+- Cada email incluye HTML y `text/plain`.
+- `MAIL_ENVELOPE_FROM` se usa como `envelope.from` para alinear el Return-Path si el proveedor SMTP lo permite.
+- Los adjuntos remotos por URL se rechazan; el panel envía informes/facturas como base64.
+
+Para validar sin enviar correos reales:
+
+```bash
+curl -i -X POST "$PREVIEW_URL/api/send" \
+  -H "Content-Type: application/json" \
+  --data "{}"
+```
+
+La respuesta esperada para payload vacío es `400` con `correlationId`.

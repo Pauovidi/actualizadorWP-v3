@@ -28,8 +28,10 @@ Ver: `scripts/sql/001_init.sql` (ejecútalo en tu Postgres desde Vercel → Stor
 - Base de datos: `DATABASE_URL` (o `POSTGRES_URL`)
 - Blob: `BLOB_READ_WRITE_TOKEN` (la crea Vercel al conectar Blob)
 - Cron: `CRON_SECRET`
-- Email (SMTP): `SMTP_HOST`, `SMTP_PORT`, `SMTP_SECURE`, `SMTP_USER`, `SMTP_PASS`, `EMAIL_FROM`
-  - Alternativa: `RESEND_API_KEY`
+- Email (SMTP/Nodemailer): `MAIL_HOST`, `MAIL_PORT`, `MAIL_SECURE`, `MAIL_USER`, `MAIL_PASS`, `MAIL_FROM`
+  - Compatibilidad aceptada: `SMTP_HOST`, `SMTP_PORT`, `SMTP_SECURE`, `SMTP_USER`, `SMTP_PASS`, `SMTP_FROM`
+  - Opcionales: `MAIL_REPLY_TO`, `MAIL_ENVELOPE_FROM`, `EMAIL_TO_DEFAULT`
+  - Fallback legacy si existe: `RESEND_API_KEY`
 
 ## Cron (Vercel)
 
@@ -54,3 +56,13 @@ En el panel de **Facturas** (agrupado por email) puedes marcar cada cliente como
 - **Trimestral**: eliges los **4 meses** en los que toca factura. En esos meses, si falta la factura, el cliente **no recibe** el correo. En los otros meses, el cron envía **solo los informes** (sin factura).
 
 La subida de factura admite **click** o **drag & drop**.
+
+## Checklist externo de entregabilidad
+
+- SPF autoriza el servidor SMTP configurado en `MAIL_HOST`.
+- DKIM activo para el dominio usado en `MAIL_FROM`.
+- DMARC publicado y alineado con `MAIL_FROM` y `MAIL_ENVELOPE_FROM`.
+- `MAIL_ENVELOPE_FROM` usa un dominio permitido por el proveedor SMTP.
+- Bounces y quejas revisables en el proveedor.
+- Cuotas y límites de tamaño de adjuntos revisados antes de activar envíos reales.
+- La entregabilidad real se valida abriendo los buzones de prueba y copiando headers completos.
