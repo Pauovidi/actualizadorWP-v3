@@ -1,22 +1,12 @@
 # Actualitzador WP — Dashboard v3 (simple)
 
-## Deploy
-- **Fuente**: rama `main` (Vercel toma esta rama como origen del despliegue).
-- **Node.js**: `20.x` (configurado en `package.json` y en el proyecto de Vercel).
-- **Scripts disponibles**:
-  - `npm run dev`
-  - `npm run build`
-  - `npm run start`
-  - `npm run smoke`
-- **Nota**: el `postinstall` usa redirección POSIX (`>/dev/null 2>&1`). En Windows puede fallar; en Vercel y entornos Unix funciona sin ajustes.
-
 ## DEMO
 - Autocompleta **token falso** cuando escribes una URL.
 - Genera **informes simulados** y puede hacer **capturas** si `SCREENSHOT_ENABLED=1`.
 - Botones por sitio: **Cargar factura** (guarda local, no servidor) y **Enviar email** (usa Resend).
 - **Enviar todos**: solo envía los sitios que **tienen factura**; avisa de los que no.
 
-## Variables de entorno
+## Variables
 ```
 DEMO_MODE=1
 NEXT_PUBLIC_DEMO=1
@@ -26,6 +16,7 @@ RESEND_API_KEY=...
 EMAIL_FROM="Actualitzador <no-reply@tu-dominio.com>"
 EMAIL_TO_DEFAULT=...
 ```
+
 
 ### Campo de email por sitio
 En la parte superior ahora verás la columna **Email destino**. Si se deja vacío, el backend usará `EMAIL_TO_DEFAULT`.
@@ -56,3 +47,6 @@ Realiza estos pasos **desde la raíz del proyecto** (la carpeta donde está este
    La opción `-u` deja configurada la rama remota para futuros `git push`/`git pull` sin parámetros.
 
 Si trabajas en otra rama, sustituye `work` por el nombre de la rama que quieras publicar.
+
+## Comandos de verificación
+- `npm run lint`: ejecuta las reglas de ESLint recomendadas por Next.js para detectar problemas comunes antes de hacer deploy.

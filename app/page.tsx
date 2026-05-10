@@ -1,7 +1,6 @@
 'use client';
 
-import { useEffect, useState } from 'react';
-import type { ChangeEvent } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import dayjs from 'dayjs';
 
 import styles from './page.module.css';
@@ -11,9 +10,10 @@ type Site = {
   url: string;         // normalizada
   token?: string;
   email?: string;      // email destino (por sitio)
-  destEmail?: string;  // compatibilidad con versiones anteriores
-  invoiceFileName?: string | null;
-  invoiceFileBase64?: string | null;
+  billingFrequency?: 'monthly' | 'quarterly';
+  quarterlyMonths?: number[] | null;
+  invoiceUrl?: string; // blob o url pública PDF
+  invoiceName?: string;
   lastResult?: UpdateResult | null;
   lastSend?: SendResult | null;
 };
@@ -21,7 +21,7 @@ type Site = {
 type UpdateResult = {
   status: 'OK' | 'ERROR' | 'WARN';
   errors?: string[];
-  reportUrl?: string;
+  reportHtml?: string;         // base64 data URL para descarga
   reportFileName?: string;     // sugerencia de nombre
   at: string;                  // ISO date
 };
@@ -33,17 +33,11 @@ type SendResult = {
   at: string;
 };
 
-const DEMO =
-  process.env.NEXT_PUBLIC_MODE === 'demo' ||
-  process.env.NEXT_PUBLIC_DEMO === '1';
+const DEMO = process.env.NEXT_PUBLIC_DEMO === '1';
 
 const arrayBufferToBase64 = (buffer: ArrayBuffer) => {
   const globalBuffer = (globalThis as unknown as {
-    Buffer?: {
-      from(data: ArrayBuffer | string, encoding?: string): {
-        toString(encoding: string): string;
-      };
-    };
+    Buffer?: { from(data: ArrayBuffer): { toString(encoding: string): string } };
   }).Buffer;
 
   if (globalBuffer?.from) {
@@ -68,26 +62,264 @@ const arrayBufferToBase64 = (buffer: ArrayBuffer) => {
 export default function Page() {
   const [sites, setSites] = useState<Site[]>([]);
   const [busy, setBusy] = useState(false);
+  const [hydrated, setHydrated] = useState(false);
+  const [invoiceMap, setInvoiceMap] = useState<Record<string, { file_name: string; blob_url: string }>>({});
+  const [selectedIdx, setSelectedIdx] = useState<Set<number>>(() => new Set());
 
-  // carga/persistencia simple en localStorage
-  useEffect(() => {
-    const raw =
-      localStorage.getItem('awp_sites_v33') ||
-      localStorage.getItem('awp_sites_v32');
-    if (raw) {
-      const parsed: Site[] = JSON.parse(raw);
-      setSites(
-        parsed.map((site) => ({
-          ...site,
-          invoiceFileName: site.invoiceFileName ?? null,
-          invoiceFileBase64: site.invoiceFileBase64 ?? null,
-        }))
-      );
+  const currentPeriod = useMemo(() => dayjs().format('YYYY-MM'), []);
+  const currentMonth = useMemo(() => Number(dayjs().format('M')), []);
+
+  const refreshInvoices = useCallback(async (emailList?: string[]) => {
+    try {
+      const r = await fetch(`/api/invoices?period=${encodeURIComponent(currentPeriod)}`);
+      const j = await r.json();
+      if (j?.ok && Array.isArray(j.invoices)) {
+        const map: Record<string, { file_name: string; blob_url: string }> = {};
+        for (const inv of j.invoices) {
+          const key = String(inv.billing_email || '').toLowerCase();
+          if (!key) continue;
+          map[key] = {
+            file_name: inv.file_name,
+            blob_url: inv.blob_url,
+          };
+        }
+        setInvoiceMap(map);
+      } else {
+        setInvoiceMap({});
+      }
+    } catch {
+      // ignore
     }
+  }, [currentPeriod]);
+
+  const saveSitesToServer = useCallback(async (nextSites: Site[]) => {
+    try {
+      // Usamos POST por compatibilidad (algunos despliegues devolvían 405 en PUT)
+      // y replace=1 para que las eliminaciones en UI se reflejen en BD.
+      // IMPORTANTE: si la lista está vacía, no hacemos replace para evitar borrados accidentales.
+      const qs = nextSites.length > 0 ? '?replace=1' : '';
+      await fetch(`/api/sites${qs}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          sites: nextSites.map((s) => ({
+            name: s.name,
+            url: s.url,
+            token: s.token || '',
+            email: s.email || '',
+            billingFrequency: (s as any).billingFrequency || 'monthly',
+            quarterlyMonths: (s as any).quarterlyMonths || null,
+          })),
+        }),
+      });
+    } catch {}
   }, []);
+
+
+  // carga inicial desde servidor (fallback: localStorage)
   useEffect(() => {
-    localStorage.setItem('awp_sites_v33', JSON.stringify(sites));
+    (async () => {
+      try {
+        const r = await fetch('/api/sites', { cache: 'no-store' });
+        const j = await r.json();
+        if (j?.ok && Array.isArray(j.sites)) {
+          setSites(j.sites);
+          setHydrated(true);
+          await refreshInvoices();
+          return;
+        }
+      } catch {}
+
+      // fallback localStorage (solo si el servidor aún no tiene sitios)
+      const raw =
+        localStorage.getItem('awp_sites_v33') ||
+        localStorage.getItem('awp_sites_v32');
+
+      if (raw) {
+        try {
+          const parsed = JSON.parse(raw);
+          if (Array.isArray(parsed)) {
+            setSites(parsed);
+            // Migración automática: subimos al servidor para habilitar automatización
+            await saveSitesToServer(parsed);
+          }
+        } catch {}
+      }
+      setHydrated(true);
+      await refreshInvoices();
+        })();
+  }, [refreshInvoices, saveSitesToServer]);
+
+  // autosave con debounce (servidor)
+  useEffect(() => {
+    if (!hydrated) return;
+    const t = setTimeout(() => {
+      // Si el frontend se ha quedado temporalmente sin sites por un bug, evitamos enviar []
+      // (en servidor también está protegido, pero así reducimos ruido).
+      if (sites.length > 0) saveSitesToServer(sites);
+    }, 800);
+    return () => clearTimeout(t);
+  }, [sites, hydrated, saveSitesToServer]);
+
+  const today = useMemo(() => dayjs().format('DD/MM/YYYY'), []);
+
+  const groupedEmails = useMemo(() => {
+    const map = new Map<
+      string,
+      { email: string; count: number; billingFrequency: 'monthly' | 'quarterly'; quarterlyMonths: number[] | null }
+    >();
+    for (const s of sites) {
+      const e = (s.email || '').trim().toLowerCase();
+      if (!e) continue;
+      const prev = map.get(e);
+      const freq = (s.billingFrequency || 'monthly') as 'monthly' | 'quarterly';
+      const qm = (s.quarterlyMonths || null) as number[] | null;
+      if (!prev) {
+        map.set(e, { email: e, count: 1, billingFrequency: freq, quarterlyMonths: qm });
+      } else {
+        map.set(e, {
+          ...prev,
+          count: prev.count + 1,
+          // Si hay discrepancias entre sitios con el mismo email, gana el más "restrictivo".
+          // (quarterly) y meses del primero no-null.
+          billingFrequency: prev.billingFrequency === 'quarterly' || freq === 'quarterly' ? 'quarterly' : 'monthly',
+          quarterlyMonths: prev.quarterlyMonths || qm,
+        });
+      }
+    }
+    return Array.from(map.values()).sort((a, b) => a.email.localeCompare(b.email));
   }, [sites]);
+
+  const updateBillingForEmail = (
+    email: string,
+    patch: { billingFrequency?: 'monthly' | 'quarterly'; quarterlyMonths?: number[] | null }
+  ) => {
+    setSites((current) =>
+      current.map((s) => {
+        const e = (s.email || '').trim().toLowerCase();
+        if (e !== email) return s;
+        return {
+          ...s,
+          billingFrequency: patch.billingFrequency ?? (s.billingFrequency || 'monthly'),
+          quarterlyMonths:
+            (patch.billingFrequency ?? s.billingFrequency) === 'quarterly'
+              ? patch.quarterlyMonths ?? (s.quarterlyMonths || [3, 6, 9, 12])
+              : null,
+        };
+      })
+    );
+  };
+
+  const uploadInvoiceForEmail = async (email: string, file: File) => {
+    setBusy(true);
+    try {
+      const fd = new FormData();
+      fd.append('email', email);
+      fd.append('period', currentPeriod);
+      fd.append('file', file);
+
+      const r = await fetch('/api/invoices/upload', { method: 'POST', body: fd });
+      const j = await r.json();
+      if (!j?.ok) throw new Error(j?.error || 'Error subiendo factura');
+      await refreshInvoices();
+    } catch (e: any) {
+      alert(e?.message || String(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const setLastSendForEmail = (email: string, next: SendResult) => {
+    const key = String(email || '').toLowerCase();
+    setSites((current) =>
+      current.map((s) => (String(s.email || '').toLowerCase() === key ? { ...s, lastSend: next } : s))
+    );
+  };
+
+  const sendForEmail = async (email: string, invoiceDue: boolean) => {
+    if (!email) return;
+
+    // Recoge sites del cliente (mismo email)
+    const key = String(email).toLowerCase();
+    const clientSites = sites.filter((s) => String(s.email || '').toLowerCase() === key);
+
+    if (clientSites.length === 0) {
+      alert('No hay webs asociadas a este email');
+      return;
+    }
+
+    // Recoge informes (deben existir tras actualizar)
+    const reports: Array<{ fileName: string; dataUrl: string }> = [];
+    const errors: Array<{ site: { name: string; url: string }; error: string }> = [];
+
+    for (const s of clientSites) {
+      if (s.lastResult?.reportHtml) {
+        reports.push({
+          fileName: s.lastResult?.reportFileName || `informe-${s.name}.html`,
+          dataUrl: s.lastResult.reportHtml,
+        });
+      } else {
+        const errMsg =
+          (s.lastResult?.errors && s.lastResult.errors.join(' | ')) ||
+          (s.lastResult?.status === 'ERROR' ? 'Error actualizando (sin informe)' : 'Informe no disponible. Ejecuta Actualizar antes.');
+        errors.push({ site: { name: s.name, url: s.url }, error: errMsg });
+      }
+    }
+
+    if (reports.length === 0) {
+      alert('No hay informes para enviar. Ejecuta "Actualizar" antes.');
+      return;
+    }
+
+    // Adjunta factura si existe en BD/Blob (y si toca, es obligatoria)
+    const inv = invoiceMap[key];
+    if (invoiceDue && !inv) {
+      alert(`Falta factura (bloquea el envío) para ${email}`);
+      return;
+    }
+
+    let invoicePayload: { fileName: string; base64: string } | null = null;
+    if (inv) {
+      const resp = await fetch(inv.blob_url);
+      if (!resp.ok) {
+        alert('No se ha podido descargar la factura desde Vercel Blob');
+        return;
+      }
+      const ab = await resp.arrayBuffer();
+      invoicePayload = { fileName: inv.file_name, base64: arrayBufferToBase64(ab) };
+    }
+
+    setBusy(true);
+    try {
+      const today = dayjs().format('YYYY-MM-DD');
+      const subject = `Informe${invoicePayload ? ' y factura' : ''} — ${email} (${currentPeriod})`;
+
+      const res = await fetch('/api/send', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          email,
+          period: currentPeriod,
+          sites: clientSites.map((s) => ({ name: s.name, url: s.url })),
+          reports,
+          invoice: invoicePayload,
+          subject,
+          errors: errors.length ? errors : undefined,
+        }),
+      });
+
+      const json = await res.json();
+      if (!json.ok) throw new Error(json.error || 'Fallo desconocido');
+
+      setLastSendForEmail(email, { status: 'OK', via: json.via, at: today });
+      alert(`Email enviado (${json.via || 'ok'}) a ${email}`);
+    } catch (e: any) {
+      setLastSendForEmail(email, { status: 'ERROR', error: e?.message || String(e), at: dayjs().format('YYYY-MM-DD') });
+      alert(e?.message || String(e));
+    } finally {
+      setBusy(false);
+    }
+  };
 
   const addSite = () =>
     setSites(s => [
@@ -97,13 +329,27 @@ export default function Page() {
         url: 'https://',
         token: DEMO ? `demo-${Math.random().toString(36).slice(2, 8)}` : '',
         email: '',
-        invoiceFileName: null,
-        invoiceFileBase64: null,
       },
     ]);
 
-  const removeSite = (i: number) =>
-    setSites((current) => current.filter((_, idx) => idx !== i));
+  const removeSite = (i: number) => {
+    setSelectedIdx((prev) => {
+      const next = new Set<number>();
+      for (const idx of prev) {
+        if (idx === i) continue;
+        next.add(idx > i ? idx - 1 : idx);
+      }
+      return next;
+    });
+
+    setSites((current) => {
+      const target = current[i];
+      if (target?.invoiceUrl) {
+        URL.revokeObjectURL(target.invoiceUrl);
+      }
+      return current.filter((_, idx) => idx !== i);
+    });
+  };
 
   const updateSite = (i: number, patch: Partial<Site>) =>
     setSites(s => s.map((site, idx) => (idx === i ? { ...site, ...patch } : site)));
@@ -115,6 +361,28 @@ export default function Page() {
     return `https://${trimmed.replace(/^www\./i, '')}`;
   };
 
+  const toggleSelect = (i: number) => {
+    setSelectedIdx((prev) => {
+      const next = new Set(prev);
+      if (next.has(i)) next.delete(i);
+      else next.add(i);
+      return next;
+    });
+  };
+
+  const setAllSelected = (checked: boolean) => {
+    setSelectedIdx(() => {
+      if (!checked) return new Set();
+      const next = new Set<number>();
+      for (let i = 0; i < sites.length; i++) next.add(i);
+      return next;
+    });
+  };
+
+  const selectedCount = selectedIdx.size;
+  const allSelected = sites.length > 0 && selectedCount === sites.length;
+
+
   const doUpdate = async (i: number, manageBusy = true) => {
     const site = sites[i];
     if (!site?.url) return;
@@ -124,16 +392,11 @@ export default function Page() {
     try {
       const res = await fetch('/api/update', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          sites: [
-            {
-              name: site.name,
-              url: normalizeUrl(site.url),
-              token: site.token ?? '',
-              email: site.email ?? '',
-            },
-          ],
+          url: normalizeUrl(site.url),
+          token: site.token ?? '',
+          screenshot: process.env.NEXT_PUBLIC_SCREENSHOT_ENABLED === '1',
+          demo: process.env.NEXT_PUBLIC_DEMO === '1',
         }),
       });
       let json: any = null;
@@ -150,50 +413,12 @@ export default function Page() {
           lastResult: {
             status: 'ERROR',
             errors: [errorMessage],
-            reportUrl: undefined,
+            reportHtml: undefined,
             reportFileName: undefined,
             at: new Date().toISOString(),
           },
         });
         alert(`Actualizado ${site.name}: con incidencias ("${errorMessage}")`);
-        return;
-      }
-
-      const results = Array.isArray(json?.results) ? json.results : null;
-      if (results?.length) {
-        const result = results[0] ?? {};
-        const rawStatus = String(result?.status || '').toLowerCase();
-        let normalizedStatus: UpdateResult['status'] = 'WARN';
-        if (rawStatus === 'ok') normalizedStatus = 'OK';
-        else if (rawStatus === 'ok_with_notes' || rawStatus === 'warn') normalizedStatus = 'WARN';
-        else if (rawStatus === 'error' || rawStatus === 'err') normalizedStatus = 'ERROR';
-
-        const errorsList: string[] = [];
-        if (Array.isArray(result?.errors)) {
-          errorsList.push(...result.errors.map((err: unknown) => String(err)));
-        } else if (typeof result?.errors === 'number' && result.errors > 0) {
-          errorsList.push(`Errores detectados: ${result.errors}`);
-        } else if (result?.errors) {
-          errorsList.push(String(result.errors));
-        }
-        if (result?.message) {
-          errorsList.push(String(result.message));
-        }
-
-        const reportUrl: string | undefined =
-          typeof result?.reportUrl === 'string' ? result.reportUrl : undefined;
-        const reportFileName = reportUrl?.split('/').pop();
-
-        updateSite(i, {
-          lastResult: {
-            status: normalizedStatus,
-            errors: errorsList,
-            reportUrl,
-            reportFileName: reportFileName || 'informe-demo.html',
-            at: new Date().toISOString(),
-          },
-        });
-        alert(`Actualizado ${site.name}: ${normalizedStatus}`);
         return;
       }
 
@@ -212,35 +437,21 @@ export default function Page() {
         payload?.report?.base64 ||
         payload?.report;
 
-      let reportLink: string | undefined =
-        typeof payload?.reportUrl === 'string' ? payload.reportUrl : undefined;
-      if (!reportLink && typeof reportHtmlRaw === 'string') {
+      let reportDataUrl: string | undefined;
+      if (typeof reportHtmlRaw === 'string') {
         if (reportHtmlRaw.startsWith('data:')) {
-          reportLink = reportHtmlRaw;
+          reportDataUrl = reportHtmlRaw;
         } else if (/[<>]/.test(reportHtmlRaw)) {
-          try {
-            if (typeof TextEncoder !== 'undefined') {
-              const buffer = new TextEncoder().encode(reportHtmlRaw).buffer;
-              reportLink = `data:text/html;base64,${arrayBufferToBase64(buffer)}`;
-            } else {
-              const globalBuffer = (globalThis as unknown as {
-                Buffer?: {
-                  from(data: string, encoding?: string): {
-                    toString(encoding: string): string;
-                  };
-                };
-              }).Buffer;
-              if (globalBuffer?.from) {
-                reportLink = `data:text/html;base64,${globalBuffer
-                  .from(reportHtmlRaw, 'utf-8')
-                  .toString('base64')}`;
-              }
-            }
-          } catch {
-            reportLink = undefined;
+          if (typeof TextEncoder !== 'undefined') {
+            reportDataUrl = `data:text/html;base64,${arrayBufferToBase64(
+              new TextEncoder().encode(reportHtmlRaw).buffer
+            )}`;
+          } else {
+            const bytes = new Uint8Array([...reportHtmlRaw].map((c) => c.charCodeAt(0)));
+            reportDataUrl = `data:text/html;base64,${arrayBufferToBase64(bytes.buffer)}`;
           }
         } else {
-          reportLink = `data:text/html;base64,${reportHtmlRaw}`;
+          reportDataUrl = `data:text/html;base64,${reportHtmlRaw}`;
         }
       }
 
@@ -253,7 +464,7 @@ export default function Page() {
         lastResult: {
           status: payload?.status ?? 'OK',
           errors: normalizedErrors,
-          reportUrl: reportLink,
+          reportHtml: reportDataUrl,
           reportFileName: fileName,
           at: new Date().toISOString(),
         },
@@ -264,7 +475,7 @@ export default function Page() {
         lastResult: {
           status: 'ERROR',
           errors: [String(e)],
-          reportUrl: undefined,
+          reportHtml: undefined,
           reportFileName: undefined,
           at: new Date().toISOString(),
         },
@@ -275,136 +486,84 @@ export default function Page() {
     }
   };
 
-  const onPickInvoice = (idx: number) => async (e: ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) {
-      setSites((current) =>
-        current.map((site, i) =>
-          i === idx
-            ? {
-                ...site,
-                invoiceFileName: null,
-                invoiceFileBase64: null,
-                lastSend: null,
-              }
-            : site
-        )
-      );
-      e.target.value = '';
-      return;
-    }
+  const downloadReport = (r?: UpdateResult | null) => {
+    if (!r?.reportHtml) return;
+    const a = document.createElement('a');
+    a.href = r.reportHtml;
+    a.download = r.reportFileName || 'informe.html';
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+  };
 
-    const base64 = await new Promise<string>((resolve, reject) => {
-      const reader = new FileReader();
-      reader.onload = () => {
-        const result = typeof reader.result === 'string' ? reader.result : '';
-        const [, content] = result.split(',');
-        resolve(content || '');
-      };
-      reader.onerror = () => reject(reader.error);
-      reader.readAsDataURL(file);
-    });
-
+  const uploadInvoice = async (i: number, file: File) => {
+    const blobUrl = URL.createObjectURL(file);
     setSites((current) =>
-      current.map((site, i) =>
-        i === idx
-          ? {
-              ...site,
-              invoiceFileName: file.name,
-              invoiceFileBase64: base64,
-              lastSend: null,
-            }
-          : site
-      )
-    );
-    e.target.value = '';
-  };
-
-  const renderReport = (r?: UpdateResult | null) => {
-    const url = typeof r?.reportUrl === 'string' ? r.reportUrl : null;
-    if (!url) {
-      return <span className={styles.muted}>—</span>;
-    }
-
-    return (
-      <a
-        className="ui-chip"
-        href={url}
-        target="_blank"
-        rel="noopener noreferrer"
-      >
-        Ver informe
-      </a>
+      current.map((site, idx) => {
+        if (idx !== i) return site;
+        if (site.invoiceUrl) {
+          URL.revokeObjectURL(site.invoiceUrl);
+        }
+        return { ...site, invoiceUrl: blobUrl, invoiceName: file.name, lastSend: null };
+      })
     );
   };
 
-  const sendEmail = async (row: Site, index: number, manageBusy = true) => {
-    const siteName = row.name || 'sitio';
-    const to = (row.email || row.destEmail || '').trim();
-    if (!to) {
-      alert("Falta 'Email destino'");
+  const sendOne = async (i: number, manageBusy = true) => {
+    const site = sites[i];
+    if (!site) return;
+
+    if (!site.invoiceUrl) {
+      alert(`Falta factura PDF en ${site.name}`);
       return;
     }
-
-    const reportUrl =
-      typeof row.lastResult?.reportUrl === 'string'
-        ? row.lastResult.reportUrl
-        : null;
 
     try {
       if (manageBusy) setBusy(true);
-      updateSite(index, { lastSend: null });
-
-      const attachments = row.invoiceFileBase64
-        ? [
-            {
-              filename: row.invoiceFileName || 'factura.pdf',
-              contentBase64: row.invoiceFileBase64,
-              contentType: 'application/pdf',
-            },
-          ]
-        : [];
-
-      if (row.invoiceFileBase64 && !row.invoiceFileBase64.length) {
-        throw new Error('La factura seleccionada está vacía o no se pudo leer.');
-      }
+      updateSite(i, { lastSend: null });
+      // obtenemos el PDF como blob para adjuntarlo
+      const pdfBlob = await (await fetch(site.invoiceUrl)).blob();
+      const pdfBuffer = await pdfBlob.arrayBuffer();
+      const pdfBase64 = arrayBufferToBase64(pdfBuffer);
 
       const res = await fetch('/api/send', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          to,
-          subject: `Informe ${siteName}`,
-          html:
-            'Hola. <br>Adjunto el informe de actualización de tu web, así como la fca. correspondiente a este mes. <br>Un saludo.',
-          reportUrl,
-          attachments,
+          site: {
+            name: site.name,
+            url: normalizeUrl(site.url),
+            email: site.email, // <- por sitio
+          },
+          reportHtml: site.lastResult?.reportHtml || null,
+          reportFileName: site.lastResult?.reportFileName || 'informe.html',
+          invoice: {
+            fileName: site.invoiceName || `factura-${dayjs().format('YYYYMMDD')}.pdf`,
+            base64: pdfBase64,
+          },
+          subject: `Informe y factura — ${site.name} (${today})`,
         }),
       });
 
-      const data = await res.json().catch(() => null);
-      if (!res.ok || !data?.ok) {
-        throw new Error(data?.error || `${res.status} ${res.statusText}`);
-      }
-
-      const via = data?.id ? `SMTP · ${data.id}` : 'SMTP';
-      updateSite(index, {
+      const json = await res.json();
+      if (!json.ok) throw new Error(json.error || 'Fallo desconocido');
+      updateSite(i, {
         lastSend: {
           status: 'OK',
-          via,
+          via: json.via,
           at: new Date().toISOString(),
         },
       });
-      alert(`Enviado ${siteName}: OK`);
+      alert(`Enviado ${site.name}: OK`);
     } catch (e: any) {
-      updateSite(index, {
+      updateSite(i, {
         lastSend: {
           status: 'ERROR',
           error: String(e?.message || e),
           at: new Date().toISOString(),
         },
       });
-      alert(`Error enviando ${siteName}: "${String(e?.message || e)}"`);
+      alert(`Error enviando ${site.name}: "${String(e?.message || e)}"`);
     } finally {
       if (manageBusy) setBusy(false);
     }
@@ -413,28 +572,191 @@ export default function Page() {
   const sendAll = async () => {
     setBusy(true);
     for (let i = 0; i < sites.length; i++) {
-      const row = sites[i];
-      if (!row) continue;
-      const to = (row.email || row.destEmail || '').trim();
-      if (!to) {
-        alert(`Falta 'Email destino' en ${row.name || `sitio ${i + 1}`}`);
-        continue;
-      }
+      const s = sites[i];
+      if (!s.invoiceUrl) continue; // respeta regla: solo envía con factura
       // eslint-disable-next-line no-await-in-loop
-      await sendEmail(row, i, false);
+      await sendOne(i, false);
     }
     setBusy(false);
   };
 
   return (
-    <main className="main">
-      <header className="topbar">
-        <h1 className="title">Panel Actualizador WP</h1>
+    <main className={styles.main}>
+      {DEMO && <span className={styles.demoBadge}>DEMO</span>}
+
+      <header className={styles.topbar}>
+        <div className={styles.titleGroup}>
+          <h1 className={styles.title}>Panel Actualizador WP</h1>
+          {DEMO && (
+            <p className={styles.demoLegend}>
+              Modo demo activo: los informes se generan con datos de ejemplo y no se
+              envían correos reales.
+            </p>
+          )}
+        </div>
       </header>
 
+      {/* Facturas (por cliente/email) */}
+      <section className={`${styles.card} ${styles.cardStack}`}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12, flexWrap: 'wrap' }}>
+          <div>
+            <h2 className={styles.sectionTitle}>Facturas ({currentPeriod})</h2>
+            <p className={styles.muted}>
+              Sube <b>1 PDF por email</b> (cliente). Se guarda en Vercel Blob para que el cron mensual pueda adjuntarla automáticamente.
+            </p>
+          </div>
+          <button
+            className={styles.btnSecondary}
+            onClick={() => refreshInvoices()}
+            disabled={busy}
+            type="button"
+          >
+            Refrescar estado
+          </button>
+        </div>
+
+        {groupedEmails.length === 0 ? (
+          <p className={styles.muted}>No hay emails todavía. Añade webs en el listado de abajo.</p>
+        ) : (
+          <div className={styles.invoiceGrid}>
+            {groupedEmails.map(({ email, count, billingFrequency, quarterlyMonths }) => {
+              const inv = invoiceMap[email];
+              const months = quarterlyMonths && quarterlyMonths.length ? quarterlyMonths : [3, 6, 9, 12];
+              const invoiceDue = billingFrequency === 'monthly' ? true : months.includes(currentMonth);
+              const invoiceLabel =
+                billingFrequency === 'monthly'
+                  ? 'Factura requerida cada mes'
+                  : invoiceDue
+                  ? 'Este mes toca factura'
+                  : 'Este mes NO toca factura';
+              return (
+                <div key={email} className={styles.invoiceRow}>
+                  <div className={styles.invoiceMeta}>
+                    <div className={styles.invoiceEmail}>{email}</div>
+                    <div className={styles.invoiceHint}>{count} web(s)</div>
+                    <div className={styles.invoiceControls}>
+                      <label className={styles.inlineLabel}>
+                        <span className={styles.inlineLabelText}>Frecuencia</span>
+                        <select
+                          className={styles.select}
+                          value={billingFrequency}
+                          onChange={(e) =>
+                            updateBillingForEmail(email, {
+                              billingFrequency: e.target.value as 'monthly' | 'quarterly',
+                              quarterlyMonths: months,
+                            })
+                          }
+                          disabled={busy}
+                        >
+                          <option value="monthly">Mensual</option>
+                          <option value="quarterly">Trimestral (4 meses)</option>
+                        </select>
+                      </label>
+
+                      {billingFrequency === 'quarterly' && (
+                        <div className={styles.monthPicker}>
+                          <div className={styles.monthPickerTitle}>Meses con factura</div>
+                          <div className={styles.monthGrid}>
+                            {Array.from({ length: 12 }).map((_, idx) => {
+                              const m = idx + 1;
+                              const checked = months.includes(m);
+                              return (
+                                <label key={m} className={styles.monthChip}>
+                                  <input
+                                    type="checkbox"
+                                    checked={checked}
+                                    onChange={(e) => {
+                                      const next = e.target.checked
+                                        ? Array.from(new Set([...months, m])).sort((a, b) => a - b)
+                                        : months.filter((x) => x !== m);
+                                      updateBillingForEmail(email, { quarterlyMonths: next });
+                                    }}
+                                    disabled={busy}
+                                  />
+                                  <span>{m}</span>
+                                </label>
+                              );
+                            })}
+                          </div>
+                          <div className={styles.monthPickerHint}>
+                            Marca los <b>4 meses</b> en los que este cliente debe recibir factura.
+                          </div>
+                        </div>
+                      )}
+                    </div>
+
+                    <div className={styles.invoiceStatus}>
+                      {inv ? (
+                        <>
+                          <span className={styles.okDot} /> <span>{inv.file_name}</span>
+                        </>
+                      ) : (
+                        <>
+                          <span className={styles.missingDot} />
+                          <span>
+                            {invoiceDue ? 'Falta factura (bloquea el envío)' : 'Sin factura (ok, no toca)'}
+                          </span>
+                        </>
+                      )}
+                    </div>
+                    <div className={styles.invoiceRule}>{invoiceLabel}</div>
+                  </div>
+                  <label
+                    className={`${styles.fileLabel} ${!invoiceDue ? styles.fileLabelDisabled : ''}`}
+                    onDragOver={(e) => {
+                      if (!invoiceDue || busy) return;
+                      e.preventDefault();
+                    }}
+                    onDrop={(e) => {
+                      if (!invoiceDue || busy) return;
+                      e.preventDefault();
+                      const f = e.dataTransfer.files?.[0];
+                      if (f) uploadInvoiceForEmail(email, f);
+                    }}
+                  >
+                    <input
+                      type="file"
+                      accept="application/pdf"
+                      onChange={(e) => {
+                        const f = e.target.files?.[0];
+                        if (f) uploadInvoiceForEmail(email, f);
+                        e.currentTarget.value = '';
+                      }}
+                      disabled={busy || !invoiceDue}
+                    />
+                    <span className={styles.fileLabelBtn}>
+                      {invoiceDue ? 'Subir / arrastrar PDF' : 'No toca este mes'}
+                    </span>
+                  </label>
+                  <button
+                    className={`${styles.btn} ${styles.btnPrimary}`}
+                    type="button"
+                    onClick={() => sendForEmail(email, invoiceDue)}
+                    disabled={busy || (invoiceDue && !inv)}
+                    title={invoiceDue && !inv ? 'Falta factura (bloquea el envío)' : 'Enviar email manual (para pruebas)'}
+                    style={{ marginLeft: 12 }}
+                  >
+                    Enviar email
+                  </button>
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </section>
+
       {/* Editor de sitios */}
-      <section className="card card-stack">
-        <div className="grid-header">
+      <section className={`${styles.card} ${styles.cardStack}`}>
+        <div className={styles.gridHeader}>
+          <div className={styles.selectCell}>
+            <input
+              type="checkbox"
+              className={styles.checkbox}
+              checked={allSelected}
+              onChange={(e) => setAllSelected(e.target.checked)}
+              aria-label="Seleccionar todos"
+            />
+          </div>
           <div>Nombre</div>
           <div>URL</div>
           <div>Token</div>
@@ -442,62 +764,97 @@ export default function Page() {
         </div>
 
         {sites.map((s, i) => (
-          <div className="site-row" key={i}>
+          <div className={styles.siteRow} key={i}>
+            <div className={styles.selectCell}>
+              <input
+                type="checkbox"
+                className={styles.checkbox}
+                checked={selectedIdx.has(i)}
+                onChange={() => toggleSelect(i)}
+                aria-label={`Seleccionar ${s.name}`}
+              />
+            </div>
+
             <input
-              className="input"
+              className={styles.input}
               value={s.name}
               onChange={(e) => updateSite(i, { name: e.target.value })}
             />
             <input
-              className="input"
+              className={styles.input}
               value={s.url}
               onChange={(e) => updateSite(i, { url: e.target.value })}
             />
             <input
-              className="input"
+              className={styles.input}
               value={s.token ?? ''}
               onChange={(e) => updateSite(i, { token: e.target.value })}
             />
-            <div className="email-cell">
+            <div className={styles.emailCell}>
               <input
                 type="email"
-                className={`input ${!s.email ? 'input-error' : ''}`}
+                className={`${styles.input} ${!s.email ? styles.inputError : ''}`}
                 placeholder="cliente@dominio.com"
                 value={s.email ?? ''}
                 onChange={(e) => updateSite(i, { email: e.target.value })}
               />
-              <button className="btn btn-ghost" onClick={() => removeSite(i)}>
+              <button className={`${styles.btn} ${styles.btnGhost}`} onClick={() => removeSite(i)}>
                 Eliminar
               </button>
             </div>
           </div>
         ))}
 
-        <div className="card-actions">
-          <button className="btn btn-ghost" onClick={addSite}>
+        <div className={styles.cardActions}>
+          <button className={`${styles.btn} ${styles.btnGhost}`} onClick={addSite}>
             Añadir sitio
           </button>
-          <button className="btn btn-primary" disabled={busy} onClick={() => sites.forEach((_, idx) => doUpdate(idx))}>
+          <button
+            className={`${styles.btn} ${styles.btnSecondary}`}
+            disabled={busy || selectedCount === 0}
+            onClick={async () => {
+              setBusy(true);
+              for (let idx = 0; idx < sites.length; idx++) {
+                if (!selectedIdx.has(idx)) continue;
+                // eslint-disable-next-line no-await-in-loop
+                await doUpdate(idx, false);
+              }
+              setBusy(false);
+            }}
+          >
+            {busy ? 'Actualizando…' : `Actualizar seleccionadas (${selectedCount})`}
+          </button>
+          <button
+            className={`${styles.btn} ${styles.btnPrimary}`}
+            disabled={busy}
+            onClick={async () => {
+              setBusy(true);
+              for (let idx = 0; idx < sites.length; idx++) {
+                // eslint-disable-next-line no-await-in-loop
+                await doUpdate(idx, false);
+              }
+              setBusy(false);
+            }}
+          >
             {busy ? 'Actualizando…' : 'Actualizar Todo'}
           </button>
         </div>
       </section>
 
       {/* Resultados */}
-      <section className="card card-stack">
-        <h2 className="section-title">Resultados</h2>
+      <section className={`${styles.card} ${styles.cardStack}`}>
+        <h2 className={styles.sectionTitle}>Resultados</h2>
 
-        <div className="results-wrapper">
-          <table className="results-table table">
+        <div className={styles.resultsWrapper}>
+          <table className={styles.resultsTable}>
             <thead>
               <tr>
                 <th>Sitio</th>
                 <th>Estado</th>
                 <th>Errores</th>
                 <th>Informe</th>
-                <th>Último envío</th>
-                <th>Factura</th>
-                <th>Enviar email</th>
+                {/* En esta versión, la factura se gestiona ARRIBA por email (cliente).
+                    Evitamos duplicidad y que el layout se rompa cuando hay errores largos. */}
               </tr>
             </thead>
             <tbody>
@@ -529,62 +886,20 @@ export default function Page() {
                         <span className={styles.muted}>—</span>
                       )}
                     </td>
-                    <td>{renderReport(r)}</td>
-                    <td className={styles.alignLeft}>
-                      {s.lastSend ? (
-                        <div className={styles.sendStatus} data-status={s.lastSend.status}>
-                          <span>
-                            {s.lastSend.status === 'OK'
-                              ? `OK${s.lastSend.via ? ` · ${s.lastSend.via}` : ''}`
-                              : 'ERROR'}
-                          </span>
-                          {s.lastSend.error && <p>{s.lastSend.error}</p>}
-                          <time>{dayjs(s.lastSend.at).format('HH:mm')}</time>
-                        </div>
+                    <td>
+                      {r?.reportHtml ? (
+                        <button className={`${styles.btn} ${styles.btnSecondary}`} onClick={() => downloadReport(r)}>
+                          Descargar HTML
+                        </button>
                       ) : (
                         <span className={styles.muted}>—</span>
                       )}
-                    </td>
-                    <td className={styles.alignLeft}>
-                      <div className={styles.invoiceCell}>
-                        <label className={`${styles.btn} ${styles.btnGhost}`}>
-                          Cargar factura PDF
-                          <input
-                            className={styles.fileInput}
-                            type="file"
-                            accept="application/pdf"
-                            onChange={onPickInvoice(i)}
-                          />
-                        </label>
-                        <p className={styles.fileName}>
-                          {s.invoiceFileName ? (
-                            s.invoiceFileName
-                          ) : (
-                            <span className={styles.muted}>
-                              <em>Ningún archivo seleccionado</em>
-                            </span>
-                          )}
-                        </p>
-                      </div>
-                    </td>
-                    <td>
-                      <button
-                        className={`${styles.btn} ${styles.btnOutline}`}
-                        disabled={busy}
-                        onClick={() => sendEmail(s, i)}
-                      >
-                        Enviar email
-                      </button>
                     </td>
                   </tr>
                 );
               })}
             </tbody>
           </table>
-        </div>
-
-        <div className="card-actions card-actions--end">
-          <button className="btn btn-primary" onClick={sendAll}>Enviar todos</button>
         </div>
       </section>
     </main>
