@@ -9,77 +9,99 @@ export function renderReportClassicV1(params: {
   errorsHtml: string;
   previewImg?: string;
   logoDataUri?: string;
+  heading?: string;
+  executiveSummaryHtml?: string;
+  issuesHeading?: string;
 }): string {
-  const { siteName, siteUrl, runStarted, okCount, warnCount, errCount, updatesRowsHtml, errorsHtml, previewImg, logoDataUri } = params;
-  const previewBlock = previewImg ? `<div class="site-preview"><img class="ph" src="${previewImg}" alt="Vista previa" /></div>` : "";
-  const footerLogo = logoDataUri ? `<img src="${logoDataUri}" alt="Devestial" />` : `<strong>Devestial</strong>`;
+  const {
+    siteName,
+    siteUrl,
+    runStarted,
+    okCount,
+    warnCount,
+    errCount,
+    updatesRowsHtml,
+    errorsHtml,
+    previewImg,
+    logoDataUri,
+    heading = 'Informe de actualización',
+    executiveSummaryHtml = '',
+    issuesHeading = 'Errores y advertencias',
+  } = params;
+  const previewBlock = previewImg
+    ? `<div style="border:1px solid #e5e7eb;border-radius:12px;padding:10px;background:#f8fafc;"><img style="width:100%;max-width:280px;height:auto;border-radius:8px;display:block;" src="${previewImg}" alt="Vista previa" /></div>`
+    : '';
+  const footerLogo = logoDataUri ? `<img src="${logoDataUri}" alt="Devestial" />` : '<strong>Devestial</strong>';
+  const generalStatus =
+    errCount > 0
+      ? 'Actualización completada con errores'
+      : warnCount > 0
+        ? 'Actualización completada con advertencias'
+        : 'Actualización completada correctamente';
+  const statusColor = errCount > 0 ? '#b91c1c' : warnCount > 0 ? '#92400e' : '#166534';
+  const statusBg = errCount > 0 ? '#fef2f2' : warnCount > 0 ? '#fffbeb' : '#f0fdf4';
+
   return `<!doctype html>
 <html lang="es">
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Informe de actualización — ${escapeHtml(siteName)}</title>
-  <style>
-    :root{ --bg:#ffffff; --fg:#0f172a; --muted:#6b7280; --line:#e5e7eb; --ok:#16a34a; --warn:#f59e0b; --err:#ef4444; --accent:#111827; --card:#f8fafc; }
-    @media (prefers-color-scheme: dark){ :root{ --bg:#0b1020; --fg:#e5e7eb; --muted:#94a3b8; --line:#1f2937; --ok:#22c55e; --warn:#fbbf24; --err:#f87171; --accent:#e2e8f0; --card:#111827; } }
-    html,body{ background:var(--bg); color:var(--fg); font:14px/1.6 system-ui,-apple-system,Segoe UI,Roboto,Inter,Arial,sans-serif; margin:0; }
-    .wrap{ max-width: 1120px; margin: 40px auto; padding: 0 20px; }
-    .topgrid{ display:grid; grid-template-columns: 1fr 340px; gap:20px; align-items:start; }
-    @media (max-width: 900px){ .topgrid{ grid-template-columns: 1fr; } }
-    header{ display:flex; flex-direction:column; gap:8px; margin-bottom: 10px; }
-    header h1{ font-size: 28px; margin:0; font-weight: 800; letter-spacing:-0.01em; }
-    header .meta{ color: var(--muted); font-size: 13px; }
-    .summary{ display:flex; gap:10px; flex-wrap:wrap; margin: 18px 0 10px; }
-    .pill{ background:var(--card); border:1px solid var(--line); border-radius:14px; padding:12px 14px; display:flex; align-items:center; gap:10px; }
-    .pill .dot{ width:10px; height:10px; border-radius:50%; display:inline-block; }
-    .pill.ok .dot{ background:var(--ok); } .pill.warn .dot{ background:var(--warn); } .pill.err .dot{ background:var(--err); }
-    h2{ font-size: 18px; margin: 26px 0 12px; border-bottom:1px solid var(--line); padding-bottom:8px; }
-    table{ width:100%; border-collapse:collapse; background:var(--card); border:1px solid var(--line); border-radius:12px; overflow:hidden; }
-    thead th{ text-align:left; font-size:12px; color:var(--muted); background: rgba(0,0,0,0.03); padding:10px 12px; }
-    tbody td{ padding:12px; border-top:1px solid var(--line); vertical-align: top; }
-    .badge{ display:inline-block; font-size:11px; padding:2px 8px; border-radius:999px; border:1px solid var(--line); background:var(--bg); }
-    .status.ok{ color:var(--ok); font-weight:600; } .status.warn{ color:var(--warn); font-weight:600; } .status.err{ color:var(--err); font-weight:600; }
-    .muted{ color:var(--muted); }
-    .site-preview{ background:var(--card); border:1px solid var(--line); border-radius:14px; padding:10px; }
-    .site-preview .ph{ width:100%; aspect-ratio: 4/3; object-fit: cover; border-radius:10px; display:block; }
-    footer{ margin: 30px 0 10px; color: var(--muted); font-size:12px; text-align:center; }
-    a{ color:inherit; }
-    .brand{ display:inline-flex; align-items:center; gap:8px; margin-left:8px; }
-    .brand img{ height:22px; width:auto; vertical-align:middle; }
-  </style>
 </head>
-<body>
-  <div class="wrap">
-    <div class="topgrid">
-      <div>
-        <header>
-          <h1>Informe de actualización</h1>
-          <div class="meta">
-            <strong>${escapeHtml(siteName)}</strong> — <a href="${escapeHtml(siteUrl)}">${escapeHtml(siteUrl)}</a><br/>
-            Ejecutado: ${escapeHtml(runStarted)}
-          </div>
-        </header>
-        <section class="summary">
-          <div class="pill ok"><span class="dot"></span><div><div><strong>OK</strong></div><div class="muted">${okCount} acciones correctas</div></div></div>
-          <div class="pill warn"><span class="dot"></span><div><div><strong>Advertencias</strong></div><div class="muted">${warnCount} posibles incidencias</div></div></div>
-          <div class="pill err"><span class="dot"></span><div><div><strong>Errores</strong></div><div class="muted">${errCount} fallos</div></div></div>
-        </section>
-      </div>
-      <aside>
-        ${previewBlock}
-      </aside>
-    </div>
+<body style="margin:0;background:#ffffff;color:#111827;font-family:Arial,Helvetica,sans-serif;font-size:14px;line-height:1.5;">
+  <div style="max-width:760px;margin:0 auto;padding:24px 16px;">
+    <table role="presentation" style="width:100%;border-collapse:collapse;margin:0 0 18px;">
+      <tbody>
+        <tr>
+          <td style="vertical-align:top;padding:0 0 12px;">
+            <h1 style="margin:0 0 12px;font-size:24px;line-height:1.25;color:#111827;font-weight:700;">${escapeHtml(heading)}</h1>
+            <table role="presentation" style="width:100%;border-collapse:collapse;background:#f8fafc;border:1px solid #e5e7eb;border-radius:12px;">
+              <tbody>
+                <tr>
+                  <td style="padding:14px;">
+                    <p style="margin:0 0 6px;color:#111827;"><strong>${escapeHtml(siteName)}</strong></p>
+                    <p style="margin:0 0 6px;color:#374151;">${escapeHtml(siteUrl)}</p>
+                    <p style="margin:0 0 6px;color:#374151;"><strong>Fecha de actualización:</strong> ${escapeHtml(runStarted)}</p>
+                    <p style="margin:10px 0 0;padding:8px 10px;border-radius:8px;background:${statusBg};color:${statusColor};font-weight:700;">${generalStatus}</p>
+                  </td>
+                </tr>
+              </tbody>
+            </table>
+          </td>
+        </tr>
+        ${previewBlock ? `<tr><td style="padding:0 0 12px;">${previewBlock}</td></tr>` : ''}
+      </tbody>
+    </table>
 
-    <section>
-      <h2>Actualizaciones</h2>
-      <table>
+    <table role="presentation" style="width:100%;border-collapse:collapse;margin:0 0 20px;">
+      <tbody>
+        <tr>
+          <td style="width:33.33%;padding:10px;border:1px solid #dcfce7;background:#f0fdf4;color:#166534;"><strong>OK</strong><br/>${okCount} acciones correctas</td>
+          <td style="width:33.33%;padding:10px;border:1px solid #fde68a;background:#fffbeb;color:#92400e;"><strong>Advertencias</strong><br/>${warnCount} posibles incidencias</td>
+          <td style="width:33.33%;padding:10px;border:1px solid #fecaca;background:#fef2f2;color:#b91c1c;"><strong>Errores</strong><br/>${errCount} fallos</td>
+        </tr>
+      </tbody>
+    </table>
+
+    <section style="margin:0 0 22px;">
+      <h2 style="font-size:18px;margin:0 0 10px;color:#111827;">Resumen ejecutivo</h2>
+      ${
+        executiveSummaryHtml ||
+        `<p style="margin:0;color:#374151;">${generalStatus}.</p>`
+      }
+    </section>
+
+    <section style="margin:0 0 22px;">
+      <h2 style="font-size:18px;margin:0 0 10px;color:#111827;">Actualizaciones</h2>
+      <table role="presentation" style="width:100%;border-collapse:collapse;border:1px solid #e5e7eb;background:#ffffff;font-size:13px;">
         <thead>
           <tr>
-            <th>Tipo</th>
-            <th>Nombre</th>
-            <th>Versión</th>
-            <th>Estado</th>
-            <th>Nota</th>
+            <th style="width:12%;padding:10px 8px;text-align:left;background:#f3f4f6;color:#374151;border-bottom:1px solid #e5e7eb;">Tipo</th>
+            <th style="width:24%;padding:10px 8px;text-align:left;background:#f3f4f6;color:#374151;border-bottom:1px solid #e5e7eb;">Nombre</th>
+            <th style="width:16%;padding:10px 8px;text-align:left;background:#f3f4f6;color:#374151;border-bottom:1px solid #e5e7eb;">Versión anterior</th>
+            <th style="width:16%;padding:10px 8px;text-align:left;background:#f3f4f6;color:#374151;border-bottom:1px solid #e5e7eb;">Versión nueva</th>
+            <th style="width:12%;padding:10px 8px;text-align:left;background:#f3f4f6;color:#374151;border-bottom:1px solid #e5e7eb;">Estado</th>
+            <th style="width:20%;padding:10px 8px;text-align:left;background:#f3f4f6;color:#374151;border-bottom:1px solid #e5e7eb;">Nota</th>
           </tr>
         </thead>
         <tbody>
@@ -88,14 +110,14 @@ export function renderReportClassicV1(params: {
       </table>
     </section>
 
-    <section>
-      <h2>Errores</h2>
+    <section style="margin:0 0 22px;">
+      <h2 style="font-size:18px;margin:0 0 10px;color:#111827;">${escapeHtml(issuesHeading)}</h2>
       ${errorsHtml}
     </section>
 
-    <footer>
-      <span class="muted">Actualización realizada por</span>
-      <span class="brand">${footerLogo}</span>
+    <footer style="margin:28px 0 0;color:#6b7280;font-size:12px;text-align:center;">
+      <span>Actualización realizada por</span>
+      <span style="display:inline-block;margin-left:6px;">${footerLogo}</span>
     </footer>
   </div>
 </body>
@@ -104,32 +126,52 @@ export function renderReportClassicV1(params: {
 
 export function rowsFromUpdated(items: any[]): string {
   if (!items || !items.length) {
-    return "<tr><td colspan='5' class='muted'>No se realizaron actualizaciones.</td></tr>";
+    return "<tr><td colspan='6' style='padding:12px;color:#6b7280;border-top:1px solid #e5e7eb;'>No se realizaron actualizaciones.</td></tr>";
   }
-  return items.map((it) => {
-    const kind = escapeHtml(it.kind || "item");
-    const name = escapeHtml(it.name || it.slug || "—");
-    const vfrom = it.from || ""; const vto = it.to || "";
-    const version = vfrom && vto ? `${vfrom} → ${vto}` : (vfrom || vto || "-");
-    const status = (it.status || "ok").toLowerCase();
-    const statusCls = status === "ok" ? "ok" : status === "warn" ? "warn" : "err";
-    const note = escapeHtml(it.note || "");
-    return `<tr>
-      <td><span class='badge ${kind}'>${kind}</span></td>
-      <td><strong>${name}</strong></td>
-      <td class='muted'>${escapeHtml(version)}</td>
-      <td class='status ${statusCls}'>${status.toUpperCase()}</td>
-      <td>${note}</td>
+
+  return items
+    .map((it) => {
+      const kind = String(it.kind || 'item').toLowerCase();
+      const kindLabel = kind === 'core' ? 'Núcleo' : kind === 'theme' ? 'Tema' : kind === 'plugin' ? 'Plugin' : escapeHtml(kind);
+      const name = escapeHtml(it.name || it.slug || '—');
+      const previousVersion = escapeHtml(it.from || it.old || '-');
+      const newVersion = escapeHtml(it.to || it.new || '-');
+      const status = String(it.status || 'ok').toLowerCase();
+      const statusLabel = status === 'warn' ? 'Advertencia' : status === 'err' ? 'Error' : 'OK';
+      const statusColor = status === 'warn' ? '#92400e' : status === 'err' ? '#b91c1c' : '#166534';
+      const statusBg = status === 'warn' ? '#fffbeb' : status === 'err' ? '#fef2f2' : '#f0fdf4';
+      const note = escapeHtml(it.note || '');
+
+      return `<tr>
+      <td style="padding:10px 8px;border-top:1px solid #e5e7eb;vertical-align:top;color:#374151;">${kindLabel}</td>
+      <td style="padding:10px 8px;border-top:1px solid #e5e7eb;vertical-align:top;color:#111827;font-weight:700;word-break:normal;">${name}</td>
+      <td style="padding:10px 8px;border-top:1px solid #e5e7eb;vertical-align:top;color:#374151;white-space:nowrap;">${previousVersion}</td>
+      <td style="padding:10px 8px;border-top:1px solid #e5e7eb;vertical-align:top;color:#374151;white-space:nowrap;">${newVersion}</td>
+      <td style="padding:10px 8px;border-top:1px solid #e5e7eb;vertical-align:top;"><span style="display:inline-block;padding:3px 8px;border-radius:999px;background:${statusBg};color:${statusColor};font-weight:700;">${statusLabel}</span></td>
+      <td style="padding:10px 8px;border-top:1px solid #e5e7eb;vertical-align:top;color:#374151;">${note}</td>
     </tr>`;
-  }).join("\n");
+    })
+    .join('\n');
 }
 
 export function errorsBox(errors: string[]): string {
-  if (!errors || !errors.length) return "<div class='muted'>Sin errores reportados.</div>";
-  const lis = errors.map(e => `<li>${escapeHtml(e)}</li>`).join("\n");
-  return `<div class='errors-box'><strong>Se han detectado errores:</strong><ul>${lis}</ul></div>`;
+  if (!errors || !errors.length) {
+    return "<div style='padding:12px;border:1px solid #e5e7eb;background:#f8fafc;color:#374151;border-radius:10px;'>Sin errores ni advertencias.</div>";
+  }
+  const lis = errors.map((e) => `<li style="margin:0 0 6px;">${escapeHtml(e)}</li>`).join('\n');
+  return `<div style='padding:12px;border:1px solid #fde68a;background:#fffbeb;color:#92400e;border-radius:10px;'><strong>Se han detectado advertencias:</strong><ul style="margin:8px 0 0;padding-left:18px;">${lis}</ul></div>`;
 }
 
-function escapeHtml(s: string){
-  return s.replace(/[&<>"']/g, (c) => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;','\'':'&#39;'}[c] as string));
+function escapeHtml(value: unknown) {
+  return String(value ?? '').replace(
+    /[&<>"']/g,
+    (character) =>
+      ({
+        '&': '&amp;',
+        '<': '&lt;',
+        '>': '&gt;',
+        '"': '&quot;',
+        "'": '&#39;',
+      })[character] as string
+  );
 }

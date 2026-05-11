@@ -1,31 +1,29 @@
 # Actualitzador WP — Dashboard v3 (simple)
 
-## Deploy
-- **Fuente**: rama `main` (Vercel toma esta rama como origen del despliegue).
-- **Node.js**: `20.x` (configurado en `package.json` y en el proyecto de Vercel).
-- **Scripts disponibles**:
-  - `npm run dev`
-  - `npm run build`
-  - `npm run start`
-  - `npm run smoke`
-- **Nota**: el `postinstall` usa redirección POSIX (`>/dev/null 2>&1`). En Windows puede fallar; en Vercel y entornos Unix funciona sin ajustes.
-
 ## DEMO
 - Autocompleta **token falso** cuando escribes una URL.
 - Genera **informes simulados** y puede hacer **capturas** si `SCREENSHOT_ENABLED=1`.
-- Botones por sitio: **Cargar factura** (guarda local, no servidor) y **Enviar email** (usa Resend).
+- Botones por sitio: **Cargar factura** (guarda local, no servidor) y **Enviar email** (usa SMTP con Nodemailer).
 - **Enviar todos**: solo envía los sitios que **tienen factura**; avisa de los que no.
 
-## Variables de entorno
+## Variables
 ```
 DEMO_MODE=1
 NEXT_PUBLIC_DEMO=1
 NEXT_PUBLIC_SHOW_SERVER_BUTTONS=0
 SCREENSHOT_ENABLED=1
-RESEND_API_KEY=...
-EMAIL_FROM="Actualitzador <no-reply@tu-dominio.com>"
+MAIL_HOST=smtp.example.com
+MAIL_PORT=587
+MAIL_SECURE=0
+MAIL_USER=...
+MAIL_PASS=...
+MAIL_FROM="Actualizador WP <no-reply@tu-dominio.com>"
+MAIL_REPLY_TO="soporte@tu-dominio.com"
+MAIL_ENVELOPE_FROM=no-reply@tu-dominio.com
+EMAIL_REPORT_DELIVERY_MODE=inline
 EMAIL_TO_DEFAULT=...
 ```
+
 
 ### Campo de email por sitio
 En la parte superior ahora verás la columna **Email destino**. Si se deja vacío, el backend usará `EMAIL_TO_DEFAULT`.
@@ -56,3 +54,39 @@ Realiza estos pasos **desde la raíz del proyecto** (la carpeta donde está este
    La opción `-u` deja configurada la rama remota para futuros `git push`/`git pull` sin parámetros.
 
 Si trabajas en otra rama, sustituye `work` por el nombre de la rama que quieras publicar.
+
+## Comandos de verificación
+- `npm run lint`: ejecuta las reglas de ESLint recomendadas por Next.js para detectar problemas comunes antes de hacer deploy.
+
+## Email deliverability
+
+- El envío real está en `app/api/send/route.ts`.
+- El transporte SMTP/Nodemailer está centralizado en `lib/email.ts`.
+- Cada respuesta relevante incluye `correlationId`; úsalo para buscar `email_send_attempt`, `email_send_success`, `email_send_error` o `email_send_duplicate_blocked` en logs de Vercel.
+- Cada email incluye HTML y `text/plain`.
+- `MAIL_ENVELOPE_FROM` se usa como `envelope.from` para alinear el Return-Path si el proveedor SMTP lo permite.
+- Los adjuntos remotos por URL se rechazan; el panel envía informes/facturas como base64.
+- Por defecto, los informes HTML se incluyen dentro del cuerpo del email (`EMAIL_REPORT_DELIVERY_MODE=inline`) y la factura PDF sigue adjunta. Este modo evita adjuntos `.html`, que penalizaron la entrega en Hotmail durante las pruebas.
+- Si hiciera falta volver temporalmente al comportamiento anterior, usa `EMAIL_REPORT_DELIVERY_MODE=attach`. Para comparar ambos comportamientos, usa `EMAIL_REPORT_DELIVERY_MODE=both`.
+
+Para validar sin enviar correos reales:
+
+```bash
+curl -i -X POST "$PREVIEW_URL/api/send" \
+  -H "Content-Type: application/json" \
+  --data "{}"
+```
+
+La respuesta esperada para payload vacío es `400` con `correlationId`.
+
+### Prueba temporal de entregabilidad
+
+En previews puede habilitarse el panel **Prueba de emails** con:
+
+```env
+ENABLE_EMAIL_TEST_PANEL=true
+EMAIL_TEST_TOKEN=<token-temporal-largo>
+NEXT_PUBLIC_ENABLE_EMAIL_TEST_PANEL=true
+```
+
+El token no es público: se introduce manualmente en la UI. `NEXT_PUBLIC_ENABLE_EMAIL_TEST_PANEL` solo muestra el panel y no autoriza envíos. La prueba permite hasta 4 destinatarios controlados y compara `sin_adjuntos`, `informe_html_adjunto`, `pdf_ficticio_adjunto` e `informe_en_cuerpo`; todo lo adjunto se genera en memoria y no toca webs, facturas reales, Blob, Neon ni cron.

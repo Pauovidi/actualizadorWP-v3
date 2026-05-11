@@ -4,7 +4,7 @@ export type SiteInput = {
   token: string;
   screenshotUrl?: string;
 
-  emailTo?: string;
+  email?: string;
   invoiceName?: string;
   invoiceType?: string;
   invoiceB64?: string;
