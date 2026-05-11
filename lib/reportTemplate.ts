@@ -9,8 +9,27 @@ export function renderReportClassicV1(params: {
   errorsHtml: string;
   previewImg?: string;
   logoDataUri?: string;
+  heading?: string;
+  executiveSummaryHtml?: string;
+  issuesHeading?: string;
+  supportCorrelationId?: string;
 }): string {
-  const { siteName, siteUrl, runStarted, okCount, warnCount, errCount, updatesRowsHtml, errorsHtml, previewImg, logoDataUri } = params;
+  const {
+    siteName,
+    siteUrl,
+    runStarted,
+    okCount,
+    warnCount,
+    errCount,
+    updatesRowsHtml,
+    errorsHtml,
+    previewImg,
+    logoDataUri,
+    heading = "Informe de actualización",
+    executiveSummaryHtml = "",
+    issuesHeading = "Errores",
+    supportCorrelationId = "",
+  } = params;
   const previewBlock = previewImg ? `<div class="site-preview"><img class="ph" src="${previewImg}" alt="Vista previa" /></div>` : "";
   const footerLogo = logoDataUri ? `<img src="${logoDataUri}" alt="Devestial" />` : `<strong>Devestial</strong>`;
   return `<!doctype html>
@@ -53,7 +72,7 @@ export function renderReportClassicV1(params: {
     <div class="topgrid">
       <div>
         <header>
-          <h1>Informe de actualización</h1>
+          <h1>${escapeHtml(heading)}</h1>
           <div class="meta">
             <strong>${escapeHtml(siteName)}</strong> — <a href="${escapeHtml(siteUrl)}">${escapeHtml(siteUrl)}</a><br/>
             Ejecutado: ${escapeHtml(runStarted)}
@@ -69,6 +88,13 @@ export function renderReportClassicV1(params: {
         ${previewBlock}
       </aside>
     </div>
+
+    ${executiveSummaryHtml ? `
+    <section>
+      <h2>Resumen ejecutivo</h2>
+      ${executiveSummaryHtml}
+    </section>
+    ` : ""}
 
     <section>
       <h2>Actualizaciones</h2>
@@ -89,13 +115,14 @@ export function renderReportClassicV1(params: {
     </section>
 
     <section>
-      <h2>Errores</h2>
+      <h2>${escapeHtml(issuesHeading)}</h2>
       ${errorsHtml}
     </section>
 
     <footer>
       <span class="muted">Actualización realizada por</span>
       <span class="brand">${footerLogo}</span>
+      ${supportCorrelationId ? `<br/><span class="muted">Referencia soporte: ${escapeHtml(supportCorrelationId)}</span>` : ""}
     </footer>
   </div>
 </body>

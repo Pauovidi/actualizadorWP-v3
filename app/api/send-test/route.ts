@@ -10,6 +10,8 @@ import {
   htmlToText,
   normalizeRecipients,
 } from '@/lib/email';
+import { buildInlineReportsHtml, sanitizeReportHtml } from '@/lib/emailInlineReport';
+import { renderReportClassicV1, rowsFromUpdated } from '@/lib/reportTemplate';
 
 export const runtime = 'nodejs';
 
@@ -54,25 +56,84 @@ function normalizeMode(value: unknown): TestMode {
   return TEST_MODES.includes(value as TestMode) ? (value as TestMode) : 'sin_adjuntos';
 }
 
-function buildFakeReportHtml(correlationId: string) {
-  return `<!doctype html>
-<html lang="es">
-  <head>
-    <meta charset="utf-8" />
-    <title>Informe ficticio Actualizador WP</title>
-  </head>
-  <body style="font-family:Arial,sans-serif;line-height:1.5;color:#111827;">
-    <h1>Informe ficticio Actualizador WP</h1>
-    <p>Este informe es una prueba de entregabilidad. No corresponde a ningun cliente ni sitio real.</p>
-    <table border="1" cellpadding="6" cellspacing="0">
-      <tr><th>Elemento</th><th>Estado</th></tr>
-      <tr><td>WordPress core</td><td>Simulado OK</td></tr>
-      <tr><td>Plugins</td><td>Simulado OK</td></tr>
-      <tr><td>Backup</td><td>No ejecutado</td></tr>
-    </table>
-    <p>Correlation ID: ${correlationId}</p>
-  </body>
-</html>`;
+function buildRealisticReportHtml(correlationId: string) {
+  const supportCorrelationId = correlationId.split('-')[0] || correlationId.slice(0, 8);
+  const runStarted = new Date().toLocaleString('es-ES', {
+    dateStyle: 'medium',
+    timeStyle: 'short',
+    timeZone: 'Europe/Madrid',
+  });
+  const items = [
+    {
+      kind: 'core',
+      name: 'WordPress Core',
+      from: '6.7.1',
+      to: '6.7.2',
+      status: 'ok',
+      note: 'Actualizacion menor aplicada correctamente.',
+    },
+    {
+      kind: 'plugin',
+      name: 'WooCommerce',
+      from: '9.1.1',
+      to: '9.2.0',
+      status: 'ok',
+      note: 'Plugin actualizado y sitio responde correctamente.',
+    },
+    {
+      kind: 'plugin',
+      name: 'Elementor',
+      from: '3.25.0',
+      to: '3.25.4',
+      status: 'warn',
+      note: 'Actualizado. Recomendado revisar cache visual de la home.',
+    },
+    {
+      kind: 'plugin',
+      name: 'Contact Form 7',
+      from: '5.9.8',
+      to: '5.9.9',
+      status: 'ok',
+      note: 'Formularios verificados sin incidencias detectadas.',
+    },
+    {
+      kind: 'theme',
+      name: 'Astra',
+      from: '4.8.0',
+      to: '4.8.1',
+      status: 'ok',
+      note: 'Tema actualizado correctamente.',
+    },
+  ];
+
+  return renderReportClassicV1({
+    heading: 'Informe de actualización WordPress',
+    siteName: 'Sitio de prueba',
+    siteUrl: 'https://cliente-ejemplo.com',
+    runStarted,
+    okCount: 4,
+    warnCount: 1,
+    errCount: 0,
+    updatesRowsHtml: rowsFromUpdated(items),
+    executiveSummaryHtml: `
+      <div style="background:#f8fafc;border:1px solid #e5e7eb;border-radius:12px;padding:14px;">
+        <p><strong>Estado general OK.</strong> La actualizacion de WordPress, plugins y tema se completo correctamente.</p>
+        <p>Se detecto una advertencia menor de revision visual tras actualizar Elementor. No bloquea el funcionamiento del sitio.</p>
+        <p><strong>Fecha/hora:</strong> ${runStarted}</p>
+      </div>
+    `,
+    issuesHeading: 'Errores y advertencias',
+    errorsHtml: `
+      <div class="errors-box">
+        <strong>Errores y advertencias</strong>
+        <ul>
+          <li>Advertencia: revisar cache visual de la home tras actualizar Elementor.</li>
+          <li>Sin errores bloqueantes durante la actualizacion.</li>
+        </ul>
+      </div>
+    `,
+    supportCorrelationId,
+  });
 }
 
 function buildFakePdf(correlationId: string) {
@@ -102,7 +163,7 @@ function buildFakePdf(correlationId: string) {
 
 function baseEmailHtml(correlationId: string, mode: TestMode) {
   return `
-    <div style="font-family:system-ui,-apple-system,Segoe UI,Roboto,Arial;line-height:1.5;">
+    <div style="max-width:680px;margin:0 auto;font-family:system-ui,-apple-system,Segoe UI,Roboto,Arial;line-height:1.5;color:#111827;">
       <p>Este es un email de prueba del sistema <strong>Actualizador WP</strong>.</p>
       <p>No requiere acción. Se usa únicamente para validar entregabilidad en un preview controlado.</p>
       <p><b>Modo:</b> ${mode}</p>
@@ -114,9 +175,9 @@ function baseEmailHtml(correlationId: string, mode: TestMode) {
 function buildMessageParts(mode: TestMode, correlationId: string) {
   const attachments: TestAttachment[] = [];
   let html = baseEmailHtml(correlationId, mode);
+  const reportHtml = buildRealisticReportHtml(correlationId);
 
   if (mode === 'informe_html_adjunto') {
-    const reportHtml = buildFakeReportHtml(correlationId);
     attachments.push({
       filename: 'informe-prueba-actualizador.html',
       content: Buffer.from(reportHtml, 'utf8'),
@@ -134,8 +195,14 @@ function buildMessageParts(mode: TestMode, correlationId: string) {
 
   if (mode === 'informe_en_cuerpo') {
     html = `${baseEmailHtml(correlationId, mode)}
-      <hr />
-      ${buildFakeReportHtml(correlationId)}
+      ${buildInlineReportsHtml([
+        {
+          filename: 'informe-prueba-actualizador.html',
+          sanitizedHtml: sanitizeReportHtml(reportHtml),
+          site: { name: 'Sitio de prueba', url: 'https://cliente-ejemplo.com' },
+          status: 'OK con una advertencia menor',
+        },
+      ])}
     `;
   }
 
