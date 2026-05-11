@@ -14,6 +14,21 @@ function escapeHtml(value: unknown) {
     .replace(/'/g, '&#39;');
 }
 
+function sanitizeInlineStyle(value: string) {
+  const cleaned = value
+    .replace(/\/\*[\s\S]*?\*\//g, '')
+    .split(';')
+    .map((rule) => rule.trim())
+    .filter(Boolean)
+    .filter((rule) => !/url\s*\(|expression\s*\(|javascript:|@import/i.test(rule))
+    .join(';');
+  return cleaned ? ` style="${escapeHtml(cleaned)}"` : '';
+}
+
+function withoutLeadingHeading(html: string) {
+  return html.replace(/^\s*<h1\b[^>]*>[\s\S]*?<\/h1>\s*/i, '');
+}
+
 export function sanitizeReportHtml(html: string) {
   const allowedTags = new Set([
     'b',
@@ -53,12 +68,13 @@ export function sanitizeReportHtml(html: string) {
     .replace(/<style[\s\S]*?<\/style>/gi, '')
     .replace(/<(iframe|object|embed|svg|canvas|form|input|button|select|textarea|link|meta|img)\b[\s\S]*?>/gi, '')
     .replace(/<\/?(html|head|body)[^>]*>/gi, '')
-    .replace(/<([/]?)([a-zA-Z0-9:-]+)(?:\s[^>]*)?>/g, (_match, slash: string, tagName: string) => {
+    .replace(/<([/]?)([a-zA-Z0-9:-]+)([^>]*)?>/g, (_match, slash: string, tagName: string, rawAttrs: string) => {
       const tag = String(tagName).toLowerCase();
       if (!allowedTags.has(tag)) return '';
       if (slash) return `</${tag}>`;
       if (tag === 'br' || tag === 'hr') return `<${tag}>`;
-      return `<${tag}>`;
+      const styleMatch = String(rawAttrs || '').match(/\sstyle=(["'])(.*?)\1/i);
+      return `<${tag}${styleMatch ? sanitizeInlineStyle(styleMatch[2]) : ''}>`;
     })
     .trim();
 }
@@ -69,34 +85,14 @@ export function buildInlineReportsHtml(reports: InlineEmailReport[]) {
   const reportItems = reports
     .map((report, index) => {
       const content =
-        report.sanitizedHtml ||
+        withoutLeadingHeading(report.sanitizedHtml) ||
         `<p style="color:#6b7280;">El informe ${escapeHtml(report.filename)} no contiene contenido legible tras el saneado.</p>`;
 
       return `
-        <section style="margin:24px 0;padding:16px;border:1px solid #d1d5db;border-radius:8px;background:#ffffff;">
-          <h2 style="margin:0 0 8px;font-size:18px;line-height:1.3;color:#111827;">Informe ${index + 1}: ${escapeHtml(
-            report.site?.name || report.filename
-          )}</h2>
-          <table role="presentation" style="width:100%;border-collapse:collapse;margin:0 0 12px;font-size:14px;">
-            <tbody>
-              <tr>
-                <td style="padding:4px 8px 4px 0;color:#374151;"><b>Sitio</b></td>
-                <td style="padding:4px 0;color:#111827;">${escapeHtml(report.site?.name || 'No especificado')}</td>
-              </tr>
-              <tr>
-                <td style="padding:4px 8px 4px 0;color:#374151;"><b>URL</b></td>
-                <td style="padding:4px 0;color:#111827;">${escapeHtml(report.site?.url || 'No especificada')}</td>
-              </tr>
-              <tr>
-                <td style="padding:4px 8px 4px 0;color:#374151;"><b>Estado</b></td>
-                <td style="padding:4px 0;color:#111827;">${escapeHtml(report.status)}</td>
-              </tr>
-              <tr>
-                <td style="padding:4px 8px 4px 0;color:#374151;"><b>Archivo origen</b></td>
-                <td style="padding:4px 0;color:#111827;">${escapeHtml(report.filename)}</td>
-              </tr>
-            </tbody>
-          </table>
+        <section style="margin:24px auto;padding:0;max-width:760px;background:#ffffff;">
+          <h1 style="margin:0 0 16px;font-size:22px;line-height:1.3;color:#111827;font-weight:700;">Informe de actualización — ${escapeHtml(
+            report.site?.name || `Sitio ${index + 1}`
+          )}</h1>
           <div style="font-family:Arial,sans-serif;font-size:14px;line-height:1.5;color:#111827;">
             ${content}
           </div>
@@ -106,8 +102,7 @@ export function buildInlineReportsHtml(reports: InlineEmailReport[]) {
     .join('');
 
   return `
-    <div style="max-width:680px;margin:20px auto 0;">
-      <h1 style="font-size:20px;line-height:1.3;margin:0 0 12px;color:#111827;">Informes de actualización</h1>
+    <div style="max-width:760px;margin:20px auto 0;">
       ${reportItems}
     </div>
   `;

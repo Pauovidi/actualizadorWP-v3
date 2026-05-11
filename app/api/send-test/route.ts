@@ -56,8 +56,7 @@ function normalizeMode(value: unknown): TestMode {
   return TEST_MODES.includes(value as TestMode) ? (value as TestMode) : 'sin_adjuntos';
 }
 
-function buildRealisticReportHtml(correlationId: string) {
-  const supportCorrelationId = correlationId.split('-')[0] || correlationId.slice(0, 8);
+function buildRealisticReportHtml(_correlationId: string) {
   const runStarted = new Date().toLocaleString('es-ES', {
     dateStyle: 'medium',
     timeStyle: 'short',
@@ -66,11 +65,11 @@ function buildRealisticReportHtml(correlationId: string) {
   const items = [
     {
       kind: 'core',
-      name: 'WordPress Core',
+      name: 'Núcleo de WordPress',
       from: '6.7.1',
       to: '6.7.2',
       status: 'ok',
-      note: 'Actualizacion menor aplicada correctamente.',
+      note: 'Actualización menor aplicada correctamente.',
     },
     {
       kind: 'plugin',
@@ -86,7 +85,7 @@ function buildRealisticReportHtml(correlationId: string) {
       from: '3.25.0',
       to: '3.25.4',
       status: 'warn',
-      note: 'Actualizado. Recomendado revisar cache visual de la home.',
+      note: 'Actualizado. Recomendamos revisar la caché visual de la página principal.',
     },
     {
       kind: 'plugin',
@@ -107,7 +106,7 @@ function buildRealisticReportHtml(correlationId: string) {
   ];
 
   return renderReportClassicV1({
-    heading: 'Informe de actualización WordPress',
+    heading: 'Informe de actualización',
     siteName: 'Sitio de prueba',
     siteUrl: 'https://cliente-ejemplo.com',
     runStarted,
@@ -117,22 +116,21 @@ function buildRealisticReportHtml(correlationId: string) {
     updatesRowsHtml: rowsFromUpdated(items),
     executiveSummaryHtml: `
       <div style="background:#f8fafc;border:1px solid #e5e7eb;border-radius:12px;padding:14px;">
-        <p><strong>Estado general OK.</strong> La actualizacion de WordPress, plugins y tema se completo correctamente.</p>
-        <p>Se detecto una advertencia menor de revision visual tras actualizar Elementor. No bloquea el funcionamiento del sitio.</p>
-        <p><strong>Fecha/hora:</strong> ${runStarted}</p>
+        <p style="margin:0 0 8px;"><strong>Actualización completada con advertencias.</strong></p>
+        <p style="margin:0 0 8px;">La actualización de WordPress, plugins y tema se completó correctamente.</p>
+        <p style="margin:0;">Se detectó una advertencia menor de revisión visual tras actualizar Elementor. No bloquea el funcionamiento del sitio.</p>
       </div>
     `,
     issuesHeading: 'Errores y advertencias',
     errorsHtml: `
-      <div class="errors-box">
+      <div style="padding:12px;border:1px solid #fde68a;background:#fffbeb;color:#92400e;border-radius:10px;">
         <strong>Errores y advertencias</strong>
-        <ul>
-          <li>Advertencia: revisar cache visual de la home tras actualizar Elementor.</li>
-          <li>Sin errores bloqueantes durante la actualizacion.</li>
+        <ul style="margin:8px 0 0;padding-left:18px;">
+          <li>Advertencia: revisar la caché visual de la página principal tras actualizar Elementor.</li>
+          <li>Sin errores bloqueantes durante la actualización.</li>
         </ul>
       </div>
     `,
-    supportCorrelationId,
   });
 }
 
@@ -161,13 +159,17 @@ function buildFakePdf(correlationId: string) {
   return Buffer.from(pdf, 'utf8');
 }
 
-function baseEmailHtml(correlationId: string, mode: TestMode) {
+function baseEmailHtml(_correlationId: string, mode: TestMode) {
+  const invoiceLine =
+    mode === 'pdf_ficticio_adjunto'
+      ? '<p style="margin:0 0 12px;">Adjuntamos la factura PDF correspondiente.</p>'
+      : '';
   return `
     <div style="max-width:680px;margin:0 auto;font-family:system-ui,-apple-system,Segoe UI,Roboto,Arial;line-height:1.5;color:#111827;">
-      <p>Este es un email de prueba del sistema <strong>Actualizador WP</strong>.</p>
-      <p>No requiere acción. Se usa únicamente para validar entregabilidad en un preview controlado.</p>
-      <p><b>Modo:</b> ${mode}</p>
-      <p><small>Correlation ID: ${correlationId}</small></p>
+      <p style="margin:0 0 12px;">Hola,</p>
+      <p style="margin:0 0 12px;">Te enviamos el informe de actualización de tu sitio.</p>
+      ${invoiceLine}
+      <p style="margin:0;">Gracias,<br/>Devestial</p>
     </div>
   `;
 }
@@ -194,16 +196,14 @@ function buildMessageParts(mode: TestMode, correlationId: string) {
   }
 
   if (mode === 'informe_en_cuerpo') {
-    html = `${baseEmailHtml(correlationId, mode)}
-      ${buildInlineReportsHtml([
+    html = buildInlineReportsHtml([
         {
           filename: 'informe-prueba-actualizador.html',
           sanitizedHtml: sanitizeReportHtml(reportHtml),
           site: { name: 'Sitio de prueba', url: 'https://cliente-ejemplo.com' },
-          status: 'OK con una advertencia menor',
+          status: 'Actualización completada con advertencias',
         },
-      ])}
-    `;
+      ]);
   }
 
   const attachmentBytes = attachments.reduce((sum, attachment) => sum + attachment.content.length, 0);
