@@ -287,7 +287,12 @@ export default function Page() {
     }
 
     // Recoge informes (deben existir tras actualizar)
-    const reports: Array<{ fileName: string; dataUrl: string }> = [];
+    const reports: Array<{
+      fileName: string;
+      dataUrl: string;
+      site: { name: string; url: string };
+      status: UpdateResult['status'];
+    }> = [];
     const errors: Array<{ site: { name: string; url: string }; error: string }> = [];
 
     for (const s of clientSites) {
@@ -295,6 +300,8 @@ export default function Page() {
         reports.push({
           fileName: s.lastResult?.reportFileName || `informe-${s.name}.html`,
           dataUrl: s.lastResult.reportHtml,
+          site: { name: s.name, url: normalizeUrl(s.url) },
+          status: s.lastResult.status,
         });
       } else {
         const errMsg =

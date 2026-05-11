@@ -28,7 +28,12 @@ type GroupSendBody = {
   email: string;
   period?: string;
   sites: Array<{ name: string; url: string }>;
-  reports: Array<{ fileName: string; dataUrl: string }>;
+  reports: Array<{
+    fileName: string;
+    dataUrl: string;
+    site?: { name: string; url: string };
+    status?: string;
+  }>;
   invoice?: { fileName: string; base64: string } | null;
   subject: string;
   errors?: Array<{ site: { name: string; url: string }; error: string }>;
@@ -42,9 +47,20 @@ type Attachment = {
   contentType: string;
 };
 
+type ReportDeliveryMode = 'inline' | 'attach' | 'both';
+
+type EmailReport = {
+  filename: string;
+  content: Buffer;
+  sanitizedHtml: string;
+  site?: { name: string; url: string };
+  status: string;
+};
+
 const MAX_ATTACHMENT_BYTES = 8 * 1024 * 1024;
 const MAX_TOTAL_ATTACHMENT_BYTES = 20 * 1024 * 1024;
 const MAX_ATTACHMENTS = 25;
+const MAX_REPORT_HTML_BYTES = 1024 * 1024;
 const IDEMPOTENCY_TTL_MS = 10 * 60 * 1000;
 
 const recentSends = new Map<string, { at: number; correlationId: string }>();
@@ -100,6 +116,18 @@ function escapeHtml(value: unknown) {
     .replace(/'/g, '&#39;');
 }
 
+function getReportDeliveryMode(): ReportDeliveryMode {
+  const raw = (process.env.EMAIL_REPORT_DELIVERY_MODE || 'inline').trim().toLowerCase();
+  if (raw === 'attach' || raw === 'both') return raw;
+  return 'inline';
+}
+
+function safeFilename(value: unknown, fallback: string) {
+  if (typeof value !== 'string') return fallback;
+  const cleaned = value.trim().replace(/[\\/:*?"<>|]+/g, '-');
+  return cleaned || fallback;
+}
+
 function parseDataUrlBase64(value: unknown, expectedPrefix: string) {
   if (typeof value !== 'string' || !value.trim()) return '';
   const trimmed = value.trim();
@@ -126,6 +154,65 @@ function decodeBase64Attachment(base64: unknown, label: string) {
   return content;
 }
 
+function decodeReportHtml(dataUrl: unknown) {
+  const base64 = parseDataUrlBase64(dataUrl, 'data:text/html;base64,');
+  const content = decodeBase64Attachment(base64, 'report');
+  if (content.length > MAX_REPORT_HTML_BYTES) throw new Error('report is too large');
+  return {
+    content,
+    html: content.toString('utf8'),
+  };
+}
+
+function sanitizeReportHtml(html: string) {
+  const allowedTags = new Set([
+    'b',
+    'blockquote',
+    'br',
+    'code',
+    'div',
+    'em',
+    'h1',
+    'h2',
+    'h3',
+    'h4',
+    'hr',
+    'i',
+    'li',
+    'ol',
+    'p',
+    'pre',
+    'small',
+    'span',
+    'strong',
+    'table',
+    'tbody',
+    'td',
+    'tfoot',
+    'th',
+    'thead',
+    'tr',
+    'u',
+    'ul',
+  ]);
+
+  return html
+    .replace(/<!doctype[^>]*>/gi, '')
+    .replace(/<!--[\s\S]*?-->/g, '')
+    .replace(/<script[\s\S]*?<\/script>/gi, '')
+    .replace(/<style[\s\S]*?<\/style>/gi, '')
+    .replace(/<(iframe|object|embed|svg|canvas|form|input|button|select|textarea|link|meta|img)\b[\s\S]*?>/gi, '')
+    .replace(/<\/?(html|head|body)[^>]*>/gi, '')
+    .replace(/<([/]?)([a-zA-Z0-9:-]+)(?:\s[^>]*)?>/g, (_match, slash: string, tagName: string) => {
+      const tag = String(tagName).toLowerCase();
+      if (!allowedTags.has(tag)) return '';
+      if (slash) return `</${tag}>`;
+      if (tag === 'br' || tag === 'hr') return `<${tag}>`;
+      return `<${tag}>`;
+    })
+    .trim();
+}
+
 function pushAttachment(attachments: Attachment[], attachment: Attachment) {
   if (attachments.length >= MAX_ATTACHMENTS) {
     throw new Error('Too many attachments');
@@ -138,28 +225,67 @@ function pushAttachment(attachments: Attachment[], attachment: Attachment) {
   attachments.push(attachment);
 }
 
-function buildAttachments(body: SingleSendBody | GroupSendBody) {
-  const attachments: Attachment[] = [];
+function siteErrorStatus(body: GroupSendBody, site?: { name: string; url: string }) {
+  if (!site) return 'Informe generado';
+  const error = (body.errors || []).find(
+    (item) => item.site?.url === site.url || item.site?.name === site.name
+  );
+  return error ? `Error: ${error.error}` : 'Informe generado';
+}
+
+function collectReports(body: SingleSendBody | GroupSendBody): EmailReport[] {
+  const reports: EmailReport[] = [];
 
   if (isGroup(body)) {
-    for (const report of body.reports || []) {
+    for (const [index, report] of (body.reports || []).entries()) {
       if (!isRecord(report) || typeof report.dataUrl !== 'string') continue;
-      const base64 = parseDataUrlBase64(report.dataUrl, 'data:text/html;base64,');
-      const content = decodeBase64Attachment(base64, 'report');
+      const decoded = decodeReportHtml(report.dataUrl);
+      const site =
+        isRecord(report.site) &&
+        typeof report.site.name === 'string' &&
+        typeof report.site.url === 'string'
+          ? { name: report.site.name, url: report.site.url }
+          : body.sites[index];
+      reports.push({
+        filename: safeFilename(report.fileName, 'informe.html'),
+        content: decoded.content,
+        sanitizedHtml: sanitizeReportHtml(decoded.html),
+        site,
+        status: typeof report.status === 'string' && report.status.trim() ? report.status.trim() : siteErrorStatus(body, site),
+      });
+    }
+    return reports;
+  }
+
+  if (body.reportHtml) {
+    const decoded = decodeReportHtml(body.reportHtml);
+    reports.push({
+      filename: safeFilename(body.reportFileName, 'informe.html'),
+      content: decoded.content,
+      sanitizedHtml: sanitizeReportHtml(decoded.html),
+      site: body.site,
+      status: 'Informe generado',
+    });
+  }
+
+  return reports;
+}
+
+function buildAttachments(
+  body: SingleSendBody | GroupSendBody,
+  reportDeliveryMode: ReportDeliveryMode,
+  reports: EmailReport[]
+) {
+  const attachments: Attachment[] = [];
+
+  if (reportDeliveryMode === 'attach' || reportDeliveryMode === 'both') {
+    for (const report of reports) {
       pushAttachment(attachments, {
-        filename: typeof report.fileName === 'string' && report.fileName.trim() ? report.fileName.trim() : 'informe.html',
-        content,
+        filename: report.filename,
+        content: report.content,
         contentType: 'text/html; charset=utf-8',
       });
     }
-  } else if (body.reportHtml) {
-    const base64 = parseDataUrlBase64(body.reportHtml, 'data:text/html;base64,');
-    const content = decodeBase64Attachment(base64, 'report');
-    pushAttachment(attachments, {
-      filename: body.reportFileName || 'informe.html',
-      content,
-      contentType: 'text/html; charset=utf-8',
-    });
   }
 
   const invoice = body.invoice;
@@ -177,7 +303,68 @@ function buildAttachments(body: SingleSendBody | GroupSendBody) {
   return attachments;
 }
 
-function buildHtmlBody(body: SingleSendBody | GroupSendBody, hasInvoice: boolean) {
+function buildInlineReportsHtml(reports: EmailReport[]) {
+  if (!reports.length) return '';
+
+  const reportItems = reports
+    .map((report, index) => {
+      const content =
+        report.sanitizedHtml ||
+        `<p style="color:#6b7280;">El informe ${escapeHtml(report.filename)} no contiene contenido legible tras el saneado.</p>`;
+
+      return `
+        <section style="margin:24px 0;padding:16px;border:1px solid #d1d5db;border-radius:8px;background:#ffffff;">
+          <h2 style="margin:0 0 8px;font-size:18px;line-height:1.3;color:#111827;">Informe ${index + 1}: ${escapeHtml(
+            report.site?.name || report.filename
+          )}</h2>
+          <table role="presentation" style="width:100%;border-collapse:collapse;margin:0 0 12px;font-size:14px;">
+            <tbody>
+              <tr>
+                <td style="padding:4px 8px 4px 0;color:#374151;"><b>Sitio</b></td>
+                <td style="padding:4px 0;color:#111827;">${escapeHtml(report.site?.name || 'No especificado')}</td>
+              </tr>
+              <tr>
+                <td style="padding:4px 8px 4px 0;color:#374151;"><b>URL</b></td>
+                <td style="padding:4px 0;color:#111827;">${escapeHtml(report.site?.url || 'No especificada')}</td>
+              </tr>
+              <tr>
+                <td style="padding:4px 8px 4px 0;color:#374151;"><b>Estado</b></td>
+                <td style="padding:4px 0;color:#111827;">${escapeHtml(report.status)}</td>
+              </tr>
+              <tr>
+                <td style="padding:4px 8px 4px 0;color:#374151;"><b>Archivo origen</b></td>
+                <td style="padding:4px 0;color:#111827;">${escapeHtml(report.filename)}</td>
+              </tr>
+            </tbody>
+          </table>
+          <div style="font-family:Arial,sans-serif;font-size:14px;line-height:1.5;color:#111827;">
+            ${content}
+          </div>
+        </section>
+      `;
+    })
+    .join('');
+
+  return `
+    <div style="margin-top:20px;">
+      <h1 style="font-size:20px;line-height:1.3;margin:0 0 12px;color:#111827;">Informes de actualización</h1>
+      ${reportItems}
+    </div>
+  `;
+}
+
+function buildHtmlBody(
+  body: SingleSendBody | GroupSendBody,
+  hasInvoice: boolean,
+  reportDeliveryMode: ReportDeliveryMode,
+  reports: EmailReport[]
+) {
+  const inlineReports = reportDeliveryMode === 'inline' || reportDeliveryMode === 'both';
+  const attachedReports = reportDeliveryMode === 'attach' || reportDeliveryMode === 'both';
+  const reportsDescription = inlineReports
+    ? 'incluimos en este email los <strong>informes de actualización</strong>'
+    : 'adjuntamos los <strong>informes de actualización</strong>';
+
   if (isGroup(body)) {
     const siteItems = body.sites
       .map(
@@ -195,9 +382,9 @@ function buildHtmlBody(body: SingleSendBody | GroupSendBody, hasInvoice: boolean
     return `
       <div style="font-family:system-ui,-apple-system,Segoe UI,Roboto,Arial;line-height:1.5;">
         <p>Hola,</p>
-        <p>Adjuntamos los <strong>informes de actualización</strong> de tus sitios${
+        <p>${reportsDescription} de tus sitios${
           body.period ? ` (<b>${escapeHtml(body.period)}</b>)` : ''
-        }${hasInvoice ? ' y la <strong>factura</strong>.' : '.'}</p>
+        }${hasInvoice ? ' y adjuntamos la <strong>factura PDF</strong>.' : '.'}</p>
         <p><b>Sitios incluidos:</b></p>
         <ul>${siteItems}</ul>
         ${
@@ -206,6 +393,12 @@ function buildHtmlBody(body: SingleSendBody | GroupSendBody, hasInvoice: boolean
                <ul style="color:#b91c1c">${errors}</ul>`
             : ''
         }
+        ${
+          attachedReports && !inlineReports
+            ? '<p>Los informes HTML van adjuntos a este email.</p>'
+            : ''
+        }
+        ${inlineReports ? buildInlineReportsHtml(reports) : ''}
         <p>Gracias,<br/>Devestial</p>
       </div>
     `;
@@ -214,13 +407,15 @@ function buildHtmlBody(body: SingleSendBody | GroupSendBody, hasInvoice: boolean
   return `
     <div style="font-family:system-ui,-apple-system,Segoe UI,Roboto,Arial;line-height:1.5;">
       <p>Hola,</p>
-      <p>Adjuntamos el <strong>informe de actualización</strong>${
-        hasInvoice ? ' y la <strong>factura</strong>' : ''
+      <p>${inlineReports ? 'Incluimos en este email' : 'Adjuntamos'} el <strong>informe de actualización</strong>${
+        hasInvoice ? ' y adjuntamos la <strong>factura PDF</strong>' : ''
       } del sitio <b>${escapeHtml(body.site.name)}</b>.</p>
       <ul>
         <li><b>Sitio:</b> ${escapeHtml(body.site.name)}</li>
         <li><b>URL:</b> ${escapeHtml(body.site.url)}</li>
       </ul>
+      ${attachedReports && !inlineReports ? '<p>El informe HTML va adjunto a este email.</p>' : ''}
+      ${inlineReports ? buildInlineReportsHtml(reports) : ''}
       <p>Gracias,<br/>Devestial</p>
     </div>
   `;
@@ -232,7 +427,13 @@ function pruneRecentSends(now = Date.now()) {
   }
 }
 
-function getDedupeKey(body: SingleSendBody | GroupSendBody, recipientsList: string[], attachments: Attachment[]) {
+function getDedupeKey(
+  body: SingleSendBody | GroupSendBody,
+  recipientsList: string[],
+  attachments: Attachment[],
+  reports: EmailReport[],
+  reportDeliveryMode: ReportDeliveryMode
+) {
   const explicit = isRecord(body) && typeof body.idempotencyKey === 'string' ? body.idempotencyKey.trim() : '';
   if (explicit) return hashForLog({ explicit, recipientsList });
 
@@ -240,7 +441,13 @@ function getDedupeKey(body: SingleSendBody | GroupSendBody, recipientsList: stri
     recipientsList,
     subject: body.subject || 'Actualización',
     period: isGroup(body) ? body.period || null : null,
-    reports: attachments.map((attachment) => ({
+    reportDeliveryMode,
+    reports: reports.map((report) => ({
+      filename: report.filename,
+      size: report.content.length,
+      hash: hashForLog(report.content.toString('base64')),
+    })),
+    attachments: attachments.map((attachment) => ({
       filename: attachment.filename,
       size: attachment.content.length,
       hash: hashForLog(attachment.content.toString('base64')),
@@ -315,13 +522,15 @@ export async function POST(req: Request) {
       return jsonError(400, 'Email destino vacío (ni por sitio ni global)', correlationId);
     }
 
-    const attachments = buildAttachments(body);
+    const reportDeliveryMode = getReportDeliveryMode();
+    const reports = collectReports(body);
+    const attachments = buildAttachments(body, reportDeliveryMode, reports);
     const subject = body.subject || 'Actualización';
-    const html = buildHtmlBody(body, Boolean(body.invoice));
+    const html = buildHtmlBody(body, Boolean(body.invoice), reportDeliveryMode, reports);
     const text = htmlToText(html);
 
     pruneRecentSends();
-    dedupeKey = getDedupeKey(body, recipientsList, attachments);
+    dedupeKey = getDedupeKey(body, recipientsList, attachments, reports, reportDeliveryMode);
     const previous = recentSends.get(dedupeKey);
     if (previous && Date.now() - previous.at <= IDEMPOTENCY_TTL_MS) {
       console.warn('email_send_duplicate_blocked', {
@@ -375,10 +584,11 @@ export async function POST(req: Request) {
         correlationId,
         provider: 'resend',
         id: data?.id,
+        reportDeliveryMode,
         durationMs: Date.now() - startedAt,
       });
 
-      return NextResponse.json({ ok: true, via: 'resend', id: data?.id, correlationId });
+      return NextResponse.json({ ok: true, via: 'resend', id: data?.id, correlationId, reportDeliveryMode });
     }
 
     const provider = 'smtp';
@@ -387,6 +597,8 @@ export async function POST(req: Request) {
       provider,
       recipientsHash: hashForLog(recipientsList),
       subjectHash: hashForLog(subject),
+      reportDeliveryMode,
+      reportCount: reports.length,
       attachmentCount: attachments.length,
       attachmentBytes: attachments.reduce((sum, attachment) => sum + attachment.content.length, 0),
       host: emailConfig.host,
@@ -422,6 +634,7 @@ export async function POST(req: Request) {
         messageId: info.messageId,
         accepted: info.accepted?.length || 0,
         rejected: info.rejected?.length || 0,
+        reportDeliveryMode,
         response: info.response,
         durationMs: Date.now() - startedAt,
       });
@@ -431,6 +644,7 @@ export async function POST(req: Request) {
         via: provider,
         id: info.messageId,
         correlationId,
+        reportDeliveryMode,
         accepted: info.accepted,
         rejected: info.rejected,
       });
@@ -464,10 +678,11 @@ export async function POST(req: Request) {
         correlationId,
         provider: 'resend',
         id: data?.id,
+        reportDeliveryMode,
         durationMs: Date.now() - startedAt,
       });
 
-      return NextResponse.json({ ok: true, via: 'resend', id: data?.id, correlationId });
+      return NextResponse.json({ ok: true, via: 'resend', id: data?.id, correlationId, reportDeliveryMode });
     }
   } catch (err: any) {
     if (dedupeKey) recentSends.delete(dedupeKey);

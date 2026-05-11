@@ -20,6 +20,7 @@ MAIL_PASS=...
 MAIL_FROM="Actualizador WP <no-reply@tu-dominio.com>"
 MAIL_REPLY_TO="soporte@tu-dominio.com"
 MAIL_ENVELOPE_FROM=no-reply@tu-dominio.com
+EMAIL_REPORT_DELIVERY_MODE=inline
 EMAIL_TO_DEFAULT=...
 ```
 
@@ -65,6 +66,8 @@ Si trabajas en otra rama, sustituye `work` por el nombre de la rama que quieras 
 - Cada email incluye HTML y `text/plain`.
 - `MAIL_ENVELOPE_FROM` se usa como `envelope.from` para alinear el Return-Path si el proveedor SMTP lo permite.
 - Los adjuntos remotos por URL se rechazan; el panel envía informes/facturas como base64.
+- Por defecto, los informes HTML se incluyen dentro del cuerpo del email (`EMAIL_REPORT_DELIVERY_MODE=inline`) y la factura PDF sigue adjunta. Este modo evita adjuntos `.html`, que penalizaron la entrega en Hotmail durante las pruebas.
+- Si hiciera falta volver temporalmente al comportamiento anterior, usa `EMAIL_REPORT_DELIVERY_MODE=attach`. Para comparar ambos comportamientos, usa `EMAIL_REPORT_DELIVERY_MODE=both`.
 
 Para validar sin enviar correos reales:
 

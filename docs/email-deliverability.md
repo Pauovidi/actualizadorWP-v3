@@ -16,6 +16,7 @@ MAIL_PASS=...
 MAIL_FROM="Actualizador WP <no-reply@tu-dominio.com>"
 MAIL_REPLY_TO="soporte@tu-dominio.com"
 MAIL_ENVELOPE_FROM=no-reply@tu-dominio.com
+EMAIL_REPORT_DELIVERY_MODE=inline
 EMAIL_TO_DEFAULT=destino-pruebas@example.com
 ```
 
@@ -43,6 +44,11 @@ Si `RESEND_API_KEY` existe, el endpoint conserva el fallback legacy cuando SMTP 
 - Configuracion SMTP ausente: `500` publico, sin filtrar secretos.
 - Adjuntos remotos por URL: `400`.
 - Adjuntos base64 invalidos o demasiado grandes: `400`.
+- Informes de actualizacion: por defecto se incluyen saneados dentro del cuerpo del email (`EMAIL_REPORT_DELIVERY_MODE=inline`) para evitar adjuntos `.html`.
+- Factura PDF: permanece como adjunto cuando existe.
+- Modo temporal de compatibilidad: `EMAIL_REPORT_DELIVERY_MODE=attach` vuelve a adjuntar informes HTML; `EMAIL_REPORT_DELIVERY_MODE=both` los incluye en cuerpo y adjunto para comparativas puntuales.
+
+El modo recomendado es `inline`. Las pruebas de preview mostraron entrega correcta con informe en cuerpo y problemas de entrega en Hotmail cuando el informe HTML iba como adjunto.
 
 El endpoint emite logs estructurados sin secretos:
 
