@@ -34,22 +34,7 @@ type SendResult = {
   at: string;
 };
 
-type EmailTestResult = {
-  recipient: string;
-  ok: boolean;
-  mode?: string;
-  correlationId?: string;
-  id?: string;
-  accepted?: string[];
-  rejected?: string[];
-  attachmentCount?: number;
-  attachmentTypes?: string[];
-  attachmentBytes?: number;
-  error?: string;
-};
-
 const DEMO = process.env.NEXT_PUBLIC_DEMO === '1';
-const EMAIL_TEST_PANEL_INITIAL = process.env.NEXT_PUBLIC_ENABLE_EMAIL_TEST_PANEL === 'true';
 
 const arrayBufferToBase64 = (buffer: ArrayBuffer) => {
   const globalBuffer = (globalThis as unknown as {
@@ -81,31 +66,9 @@ export default function Page() {
   const [hydrated, setHydrated] = useState(false);
   const [invoiceMap, setInvoiceMap] = useState<Record<string, { file_name: string; blob_url: string }>>({});
   const [selectedIdx, setSelectedIdx] = useState<Set<number>>(() => new Set());
-  const [emailTestEnabled, setEmailTestEnabled] = useState(EMAIL_TEST_PANEL_INITIAL);
-  const [emailTestToken, setEmailTestToken] = useState('');
-  const [emailTestRecipients, setEmailTestRecipients] = useState('');
-  const [emailTestMode, setEmailTestMode] = useState('sin_adjuntos');
-  const [emailTestBusy, setEmailTestBusy] = useState(false);
-  const [emailTestResults, setEmailTestResults] = useState<EmailTestResult[]>([]);
-  const [emailTestError, setEmailTestError] = useState('');
 
   const currentPeriod = useMemo(() => dayjs().format('YYYY-MM'), []);
   const currentMonth = useMemo(() => Number(dayjs().format('M')), []);
-
-  useEffect(() => {
-    let cancelled = false;
-    fetch('/api/send-test', { cache: 'no-store' })
-      .then((response) => (response.ok ? response.json() : null))
-      .then((json) => {
-        if (!cancelled) setEmailTestEnabled(Boolean(json?.enabled));
-      })
-      .catch(() => {
-        if (!cancelled) setEmailTestEnabled(false);
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, []);
 
   const refreshInvoices = useCallback(async (emailList?: string[]) => {
     try {
@@ -274,6 +237,11 @@ export default function Page() {
     );
   };
 
+  const sendFailureMessage = (json: any) =>
+    typeof json?.correlationId === 'string' && json.correlationId
+      ? `No se pudo enviar el email. Referencia: ${json.correlationId}`
+      : 'No se pudo enviar el email. Revisa los logs de producción.';
+
   const sendForEmail = async (email: string, invoiceDue: boolean) => {
     if (!email) return;
 
@@ -358,7 +326,7 @@ export default function Page() {
       });
 
       const json = await res.json();
-      if (!json.ok) throw new Error(json.error || 'Fallo desconocido');
+      if (!json.ok) throw new Error(sendFailureMessage(json));
 
       setLastSendForEmail(email, { status: 'OK', via: json.via, correlationId: json.correlationId, at: today });
       alert(`Email enviado (${json.via || 'ok'}) a ${email}${json.correlationId ? ` · ${json.correlationId}` : ''}`);
@@ -597,7 +565,7 @@ export default function Page() {
       });
 
       const json = await res.json();
-      if (!json.ok) throw new Error(json.error || 'Fallo desconocido');
+      if (!json.ok) throw new Error(sendFailureMessage(json));
       updateSite(i, {
         lastSend: {
           status: 'OK',
@@ -632,55 +600,6 @@ export default function Page() {
     setBusy(false);
   };
 
-  const parseEmailTestRecipients = () =>
-    emailTestRecipients
-      .split(/[\s,;]+/)
-      .map((email) => email.trim().toLowerCase())
-      .filter(Boolean)
-      .filter((email, index, list) => list.indexOf(email) === index);
-
-  const sendEmailTest = async () => {
-    const recipients = parseEmailTestRecipients();
-    setEmailTestError('');
-    setEmailTestResults([]);
-
-    if (!recipients.length) {
-      setEmailTestError('Introduce al menos un email de prueba.');
-      return;
-    }
-    if (recipients.length > 4) {
-      setEmailTestError('Máximo 4 destinatarios.');
-      return;
-    }
-    if (recipients.some((email) => !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email))) {
-      setEmailTestError('Hay destinatarios con formato inválido.');
-      return;
-    }
-
-    setEmailTestBusy(true);
-    try {
-      const response = await fetch('/api/send-test', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'x-email-test-token': emailTestToken,
-        },
-        body: JSON.stringify({
-          recipients,
-          mode: emailTestMode,
-          idempotencyKey: `manual-email-test:${Date.now()}:${recipients.join('|')}`,
-        }),
-      });
-      const json = await response.json();
-      if (!response.ok) throw new Error(json?.error || 'No se pudo enviar la prueba');
-      setEmailTestResults(Array.isArray(json?.results) ? json.results : []);
-    } catch (error: any) {
-      setEmailTestError(error?.message || String(error));
-    } finally {
-      setEmailTestBusy(false);
-    }
-  };
-
   return (
     <main className={styles.main}>
       {DEMO && <span className={styles.demoBadge}>DEMO</span>}
@@ -696,90 +615,6 @@ export default function Page() {
           )}
         </div>
       </header>
-
-      {emailTestEnabled && (
-        <section className={`${styles.card} ${styles.cardStack} ${styles.emailTestCard}`}>
-          <div>
-            <h2 className={styles.sectionTitle}>Prueba de emails</h2>
-            <p className={styles.muted}>
-              Envía un email ficticio de entregabilidad a destinatarios controlados. No usa webs, facturas, Blob, Neon ni cron.
-            </p>
-          </div>
-          <label className={styles.emailTestLabel}>
-            <span>Token temporal</span>
-            <input
-              className={styles.input}
-              type="password"
-              value={emailTestToken}
-              onChange={(event) => setEmailTestToken(event.target.value)}
-              placeholder="EMAIL_TEST_TOKEN"
-              disabled={emailTestBusy}
-              autoComplete="off"
-            />
-          </label>
-          <label className={styles.emailTestLabel}>
-            <span>Modo de prueba</span>
-            <select
-              className={styles.select}
-              value={emailTestMode}
-              onChange={(event) => setEmailTestMode(event.target.value)}
-              disabled={emailTestBusy}
-            >
-              <option value="sin_adjuntos">sin_adjuntos</option>
-              <option value="informe_html_adjunto">informe_html_adjunto</option>
-              <option value="pdf_ficticio_adjunto">pdf_ficticio_adjunto</option>
-              <option value="informe_en_cuerpo">informe_en_cuerpo</option>
-            </select>
-          </label>
-          <label className={styles.emailTestLabel}>
-            <span>Destinatarios de prueba</span>
-            <textarea
-              className={styles.emailTestTextarea}
-              value={emailTestRecipients}
-              onChange={(event) => setEmailTestRecipients(event.target.value)}
-              placeholder="persona1@example.com, persona2@example.com"
-              rows={3}
-              disabled={emailTestBusy}
-            />
-          </label>
-          <div className={styles.emailTestActions}>
-            <button
-              className={`${styles.btn} ${styles.btnPrimary}`}
-              type="button"
-              onClick={sendEmailTest}
-              disabled={emailTestBusy}
-            >
-              {emailTestBusy ? 'Enviando...' : 'Enviar email de prueba'}
-            </button>
-            <span className={styles.muted}>Máximo 4 destinatarios.</span>
-          </div>
-          {emailTestError && <p className={styles.emailTestError}>{emailTestError}</p>}
-          {emailTestResults.length > 0 && (
-            <div className={styles.emailTestResults}>
-              {emailTestResults.map((result) => (
-                <div key={`${result.recipient}-${result.correlationId}`} className={styles.emailTestResult}>
-                  <div>
-                    <strong>{result.recipient}</strong>
-                    <div className={result.ok ? styles.emailTestOk : styles.emailTestErrorText}>
-                      {result.ok ? 'Enviado' : result.error || 'Error'}
-                    </div>
-                    {result.mode && <div className={styles.emailTestMode}>modo: {result.mode}</div>}
-                  </div>
-                  <div className={styles.emailTestMeta}>
-                    {result.correlationId && <span>correlationId: {result.correlationId}</span>}
-                    {result.id && <span>messageId: {result.id}</span>}
-                    {result.accepted && <span>accepted: {result.accepted.length}</span>}
-                    {result.rejected && <span>rejected: {result.rejected.length}</span>}
-                    {typeof result.attachmentCount === 'number' && <span>attachmentCount: {result.attachmentCount}</span>}
-                    {result.attachmentTypes && <span>attachmentTypes: {result.attachmentTypes.join(', ') || 'none'}</span>}
-                    {typeof result.attachmentBytes === 'number' && <span>attachmentBytes: {result.attachmentBytes}</span>}
-                  </div>
-                </div>
-              ))}
-            </div>
-          )}
-        </section>
-      )}
 
       {/* Facturas (por cliente/email) */}
       <section className={`${styles.card} ${styles.cardStack}`}>

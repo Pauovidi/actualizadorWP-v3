@@ -49,6 +49,13 @@ type Attachment = {
 };
 
 type ReportDeliveryMode = 'inline' | 'attach' | 'both';
+type EmailErrorCategory =
+  | 'smtp_auth'
+  | 'smtp_connection'
+  | 'smtp_rate_limit'
+  | 'smtp_temporary'
+  | 'config'
+  | 'unknown';
 
 type EmailReport = {
   filename: string;
@@ -98,14 +105,14 @@ function isSingle(body: unknown): body is SingleSendBody {
   );
 }
 
-function jsonError(status: number, error: string, correlationId: string) {
-  return NextResponse.json({ ok: false, error, correlationId }, { status });
+function jsonError(status: number, error: string, correlationId: string, category?: EmailErrorCategory) {
+  return NextResponse.json({ ok: false, error, correlationId, ...(category ? { category } : {}) }, { status });
 }
 
 function publicError(error: unknown) {
   if (error instanceof EmailConfigError) return 'Email service is not configured';
-  if (error instanceof EmailDeliveryError) return 'Email could not be sent';
-  return 'Email could not be sent';
+  if (error instanceof EmailDeliveryError) return 'No se pudo enviar el email';
+  return 'No se pudo enviar el email';
 }
 
 function escapeHtml(value: unknown) {
@@ -121,6 +128,68 @@ function getReportDeliveryMode(): ReportDeliveryMode {
   const raw = (process.env.EMAIL_REPORT_DELIVERY_MODE || 'inline').trim().toLowerCase();
   if (raw === 'attach' || raw === 'both') return raw;
   return 'inline';
+}
+
+function smtpValue(error: unknown, key: string) {
+  if (!isRecord(error)) return undefined;
+  const value = error[key];
+  return typeof value === 'string' || typeof value === 'number' ? value : undefined;
+}
+
+function sanitizeLogMessage(value: unknown) {
+  return String(value || '')
+    .replace(/(pass(word)?|pwd|token|secret|api[-_]?key|authorization)\s*[:=]\s*([^\s,;]+)/gi, '$1=[redacted]')
+    .replace(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/gi, '[email]')
+    .replace(/\s+/g, ' ')
+    .slice(0, 500);
+}
+
+function classifyEmailError(error: unknown): EmailErrorCategory {
+  if (error instanceof EmailConfigError) return 'config';
+
+  const code = String(smtpValue(error, 'code') || '').toUpperCase();
+  const command = String(smtpValue(error, 'command') || '').toUpperCase();
+  const responseCodeRaw = smtpValue(error, 'responseCode');
+  const responseCode =
+    typeof responseCodeRaw === 'number'
+      ? responseCodeRaw
+      : typeof responseCodeRaw === 'string'
+        ? Number(responseCodeRaw)
+        : 0;
+  const message = `${smtpValue(error, 'message') || ''} ${smtpValue(error, 'response') || ''}`.toLowerCase();
+
+  if (
+    code === 'EAUTH' ||
+    command === 'AUTH' ||
+    responseCode === 530 ||
+    responseCode === 534 ||
+    responseCode === 535 ||
+    /auth|authentication|credentials|login|username|password/.test(message)
+  ) {
+    return 'smtp_auth';
+  }
+
+  if (
+    code === 'ECONNECTION' ||
+    code === 'ESOCKET' ||
+    code === 'ETIMEDOUT' ||
+    code === 'ECONNREFUSED' ||
+    code === 'ENOTFOUND' ||
+    code === 'EHOSTUNREACH' ||
+    /connect|connection|socket|timeout|timed out|dns|network|refused/.test(message)
+  ) {
+    return 'smtp_connection';
+  }
+
+  if (responseCode === 421 || responseCode === 450 || responseCode === 451 || responseCode === 452 || /rate|limit|throttle|quota|too many/.test(message)) {
+    return 'smtp_rate_limit';
+  }
+
+  if (responseCode >= 400 && responseCode < 500) {
+    return 'smtp_temporary';
+  }
+
+  return 'unknown';
 }
 
 function safeFilename(value: unknown, fallback: string) {
@@ -553,10 +622,14 @@ export async function POST(req: Request) {
     } catch (smtpErr: any) {
       if (!resendApiKey) throw new EmailDeliveryError(smtpErr);
 
+      const smtpCategory = classifyEmailError(smtpErr);
       console.warn('email_send_smtp_fallback', {
         correlationId,
+        category: smtpCategory,
         errorName: smtpErr?.name,
         errorCode: smtpErr?.code,
+        smtpResponseCode: smtpErr?.responseCode,
+        smtpCommand: smtpErr?.command,
         provider: 'resend',
       });
 
@@ -589,23 +662,29 @@ export async function POST(req: Request) {
   } catch (err: any) {
     if (dedupeKey) recentSends.delete(dedupeKey);
     const status = err instanceof EmailConfigError || err instanceof EmailDeliveryError ? 500 : 400;
+    const cause = err instanceof EmailDeliveryError ? err.causeError : err;
+    const category = classifyEmailError(cause);
     const error =
       err instanceof EmailConfigError || err instanceof EmailDeliveryError
         ? publicError(err)
         : err?.message || 'Invalid email payload';
-    const cause = err instanceof EmailDeliveryError ? err.causeError : err;
     console.error('email_send_error', {
+      event: 'email_send_error',
       correlationId,
+      category,
       errorName: cause instanceof Error ? cause.name : err?.name,
       errorCode: isRecord(cause) ? cause.code : err?.code,
-      message:
+      smtpResponseCode: smtpValue(cause, 'responseCode'),
+      smtpCommand: smtpValue(cause, 'command'),
+      message: sanitizeLogMessage(
         err instanceof EmailConfigError
-          ? 'Email configuration missing'
-          : err instanceof EmailDeliveryError
-            ? 'Email delivery failed'
-            : err?.message || String(err),
+          ? `Email configuration missing: ${err.missing.join(', ')}`
+          : cause instanceof Error
+            ? cause.message
+            : err?.message || String(err)
+      ),
       durationMs: Date.now() - startedAt,
     });
-    return jsonError(status, error, correlationId);
+    return jsonError(status, error, correlationId, category);
   }
 }
