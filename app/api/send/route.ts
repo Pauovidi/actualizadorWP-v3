@@ -65,6 +65,13 @@ type EmailReport = {
   status: string;
 };
 
+type SmtpSendInfo = {
+  messageId?: string;
+  accepted?: unknown[];
+  rejected?: unknown[];
+  response?: string;
+};
+
 const MAX_ATTACHMENT_BYTES = 8 * 1024 * 1024;
 const MAX_TOTAL_ATTACHMENT_BYTES = 20 * 1024 * 1024;
 const MAX_ATTACHMENTS = 25;
@@ -75,11 +82,13 @@ const recentSends = new Map<string, { at: number; correlationId: string }>();
 
 class EmailDeliveryError extends Error {
   causeError: unknown;
+  alreadyLogged: boolean;
 
-  constructor(causeError: unknown) {
+  constructor(causeError: unknown, alreadyLogged = false) {
     super('Email delivery failed');
     this.name = 'EmailDeliveryError';
     this.causeError = causeError;
+    this.alreadyLogged = alreadyLogged;
   }
 }
 
@@ -190,6 +199,115 @@ function classifyEmailError(error: unknown): EmailErrorCategory {
   }
 
   return 'unknown';
+}
+
+function safeSmtpErrorValue(value: unknown) {
+  if (typeof value === 'string' || typeof value === 'number') {
+    return sanitizeLogMessage(value);
+  }
+  return undefined;
+}
+
+function getErrorName(error: unknown) {
+  if (error instanceof Error && error.name) return error.name;
+  return safeSmtpErrorValue(smtpValue(error, 'name'));
+}
+
+function getErrorMessage(error: unknown) {
+  if (error instanceof Error) return sanitizeLogMessage(error.message);
+  return sanitizeLogMessage(smtpValue(error, 'message') || String(error || 'Unknown email error'));
+}
+
+function buildEmailErrorLog(params: {
+  correlationId: string;
+  category: EmailErrorCategory;
+  error: unknown;
+  durationMs: number;
+  phase?: string;
+}) {
+  const error = params.error;
+  const code = safeSmtpErrorValue(smtpValue(error, 'code'));
+  const command = safeSmtpErrorValue(smtpValue(error, 'command'));
+  const responseCode = smtpValue(error, 'responseCode');
+  const response = safeSmtpErrorValue(smtpValue(error, 'response'));
+  const message = getErrorMessage(error);
+  const name = getErrorName(error);
+
+  return {
+    event: 'email_send_error',
+    correlationId: params.correlationId,
+    category: params.category,
+    ...(params.phase ? { phase: params.phase } : {}),
+    error: {
+      name,
+      code,
+      command,
+      responseCode,
+      response,
+      message,
+    },
+    errorName: name,
+    errorCode: code,
+    smtpCommand: command,
+    smtpResponseCode: responseCode,
+    smtpResponse: response,
+    message,
+    durationMs: params.durationMs,
+  };
+}
+
+function logEmailSendError(params: {
+  correlationId: string;
+  category: EmailErrorCategory;
+  error: unknown;
+  durationMs: number;
+  phase?: string;
+}) {
+  try {
+    console.error('email_send_error', buildEmailErrorLog(params));
+  } catch (logErr) {
+    try {
+      console.error('email_send_error_logger_failed', {
+        event: 'email_send_error_logger_failed',
+        correlationId: params.correlationId,
+        category: params.category,
+        loggerError: sanitizeLogMessage(logErr instanceof Error ? logErr.message : String(logErr)),
+      });
+    } catch {
+      // Never let logging failures mask the original SMTP failure.
+    }
+  }
+}
+
+function getSmtpOperationTimeoutMs() {
+  const parsed = Number(firstEnv('MAIL_SMTP_TIMEOUT_MS', 'SMTP_TIMEOUT_MS') || 8000);
+  if (!Number.isFinite(parsed) || parsed <= 0) return 8000;
+  return Math.min(Math.max(parsed, 3000), 25000);
+}
+
+function createSmtpTimeoutError(operation: string, timeoutMs: number) {
+  const error = new Error(`SMTP ${operation} timed out after ${timeoutMs}ms`);
+  Object.assign(error, {
+    code: 'ETIMEDOUT',
+    command: operation,
+    responseCode: 421,
+    response: `SMTP ${operation} timed out`,
+  });
+  return error;
+}
+
+async function withSmtpTimeout<T>(operation: string, promise: Promise<T>, timeoutMs: number): Promise<T> {
+  let timeout: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      promise,
+      new Promise<T>((_, reject) => {
+        timeout = setTimeout(() => reject(createSmtpTimeoutError(operation, timeoutMs)), timeoutMs);
+      }),
+    ]);
+  } finally {
+    if (timeout) clearTimeout(timeout);
+  }
 }
 
 function safeFilename(value: unknown, fallback: string) {
@@ -578,10 +696,11 @@ export async function POST(req: Request) {
       fromDomain: extractEmail(emailConfig.from).split('@').pop(),
     });
 
+    const smtpTimeoutMs = getSmtpOperationTimeoutMs();
+    const transporter = createEmailTransport(emailConfig);
     try {
-      const transporter = createEmailTransport(emailConfig);
-      await transporter.verify();
-      const info = await transporter.sendMail({
+      await withSmtpTimeout('VERIFY', transporter.verify(), smtpTimeoutMs);
+      const info = (await withSmtpTimeout('DATA', transporter.sendMail({
         from: emailConfig.from,
         replyTo: emailConfig.replyTo,
         envelope: {
@@ -597,7 +716,7 @@ export async function POST(req: Request) {
           'X-Entity-Ref-ID': correlationId,
         },
         attachments,
-      });
+      }), smtpTimeoutMs)) as SmtpSendInfo;
 
       console.info('email_send_success', {
         correlationId,
@@ -620,9 +739,17 @@ export async function POST(req: Request) {
         rejected: info.rejected,
       });
     } catch (smtpErr: any) {
-      if (!resendApiKey) throw new EmailDeliveryError(smtpErr);
-
       const smtpCategory = classifyEmailError(smtpErr);
+      logEmailSendError({
+        correlationId,
+        category: smtpCategory,
+        error: smtpErr,
+        phase: 'smtp',
+        durationMs: Date.now() - startedAt,
+      });
+
+      if (!resendApiKey) throw new EmailDeliveryError(smtpErr, true);
+
       console.warn('email_send_smtp_fallback', {
         correlationId,
         category: smtpCategory,
@@ -658,6 +785,12 @@ export async function POST(req: Request) {
       });
 
       return NextResponse.json({ ok: true, via: 'resend', id: data?.id, correlationId, reportDeliveryMode });
+    } finally {
+      try {
+        transporter.close();
+      } catch {
+        // Best-effort cleanup after SMTP timeout or failure.
+      }
     }
   } catch (err: any) {
     if (dedupeKey) recentSends.delete(dedupeKey);
@@ -668,23 +801,18 @@ export async function POST(req: Request) {
       err instanceof EmailConfigError || err instanceof EmailDeliveryError
         ? publicError(err)
         : err?.message || 'Invalid email payload';
-    console.error('email_send_error', {
-      event: 'email_send_error',
-      correlationId,
-      category,
-      errorName: cause instanceof Error ? cause.name : err?.name,
-      errorCode: isRecord(cause) ? cause.code : err?.code,
-      smtpResponseCode: smtpValue(cause, 'responseCode'),
-      smtpCommand: smtpValue(cause, 'command'),
-      message: sanitizeLogMessage(
-        err instanceof EmailConfigError
-          ? `Email configuration missing: ${err.missing.join(', ')}`
-          : cause instanceof Error
-            ? cause.message
-            : err?.message || String(err)
-      ),
-      durationMs: Date.now() - startedAt,
-    });
+    if (!(err instanceof EmailDeliveryError && err.alreadyLogged)) {
+      logEmailSendError({
+        correlationId,
+        category,
+        error:
+          err instanceof EmailConfigError
+            ? new Error(`Email configuration missing: ${err.missing.join(', ')}`)
+            : cause,
+        phase: err instanceof EmailConfigError ? 'config' : 'request',
+        durationMs: Date.now() - startedAt,
+      });
+    }
     return jsonError(status, error, correlationId, category);
   }
 }
