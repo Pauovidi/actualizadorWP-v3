@@ -123,6 +123,7 @@ export function getEmailConfig(): EmailConfig {
 }
 
 export function createEmailTransport(config = getEmailConfig()) {
+  const timeoutMs = Number(firstEnv('MAIL_SMTP_TIMEOUT_MS', 'SMTP_TIMEOUT_MS') || 8000);
   return nodemailer.createTransport({
     host: config.host,
     port: config.port,
@@ -131,6 +132,8 @@ export function createEmailTransport(config = getEmailConfig()) {
       user: config.user,
       pass: config.pass,
     },
-    connectionTimeout: 15000,
+    connectionTimeout: timeoutMs,
+    greetingTimeout: timeoutMs,
+    socketTimeout: timeoutMs,
   });
 }
