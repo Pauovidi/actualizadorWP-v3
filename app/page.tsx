@@ -274,6 +274,11 @@ export default function Page() {
     );
   };
 
+  const sendFailureMessage = (json: any) =>
+    typeof json?.correlationId === 'string' && json.correlationId
+      ? `No se pudo enviar el email. Referencia: ${json.correlationId}`
+      : 'No se pudo enviar el email. Revisa los logs de producción.';
+
   const sendForEmail = async (email: string, invoiceDue: boolean) => {
     if (!email) return;
 
@@ -358,7 +363,7 @@ export default function Page() {
       });
 
       const json = await res.json();
-      if (!json.ok) throw new Error(json.error || 'Fallo desconocido');
+      if (!json.ok) throw new Error(sendFailureMessage(json));
 
       setLastSendForEmail(email, { status: 'OK', via: json.via, correlationId: json.correlationId, at: today });
       alert(`Email enviado (${json.via || 'ok'}) a ${email}${json.correlationId ? ` · ${json.correlationId}` : ''}`);
@@ -597,7 +602,7 @@ export default function Page() {
       });
 
       const json = await res.json();
-      if (!json.ok) throw new Error(json.error || 'Fallo desconocido');
+      if (!json.ok) throw new Error(sendFailureMessage(json));
       updateSite(i, {
         lastSend: {
           status: 'OK',
