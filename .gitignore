@@ -19,5 +19,6 @@ pnpm-debug.log*
 
 *.tgz
 *.tsbuildinfo
+.test-build/
 .DS_Store
 Thumbs.db
