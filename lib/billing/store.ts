@@ -1,9 +1,9 @@
 import type { PoolClient } from 'pg';
 import type { QuipuInvoice } from './quipu';
-import type { Client, Store, StoredInvoice } from './service';
+import type { Client, Store, StoredInvoice, SubscriptionStore } from './service';
 import { pdfHash } from './service';
 
-export class TestBillingStore implements Store {
+export class TestBillingStore implements Store, SubscriptionStore {
   constructor(readonly db: PoolClient) {}
   async assertIsolated() {
     const r = await this.db.query('SELECT purpose FROM billing_test.environment WHERE id = TRUE');
@@ -54,5 +54,15 @@ export class TestBillingStore implements Store {
   async savePayment(invoice: string, id: string | null, status: string) {
     await this.db.query(`UPDATE billing_test.payments SET payment_intent_id=COALESCE($2,payment_intent_id),
       status=$3,updated_at=now() WHERE quipu_id=$1`, [invoice, id, status]);
+  }
+  async claimSubscriptionPayment(client: string, period: string, amount: number) {
+    const r = await this.db.query(`INSERT INTO billing_test.subscription_payments (client_id,period,amount_cents)
+      VALUES ($1,$2,$3) ON CONFLICT DO NOTHING RETURNING client_id`, [client, period, amount]);
+    return r.rowCount === 1;
+  }
+  async saveSubscriptionPayment(client: string, period: string, id: string | null, status: string) {
+    await this.db.query(`UPDATE billing_test.subscription_payments
+      SET payment_intent_id=COALESCE($3,payment_intent_id),status=$4,updated_at=now()
+      WHERE client_id=$1 AND period=$2`, [client, period, id, status]);
   }
 }

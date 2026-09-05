@@ -3,6 +3,7 @@ import type { QuipuInvoice } from './quipu';
 
 export type MandateBinding = { customerId: string; paymentMethodId: string; mandateId: string };
 export type Payment = { id: string; status: string; amount: number; currency: string; livemode: false };
+export type SubscriptionCharge = { clientId: string; period: string; amountCents: number };
 
 export class StripeTestClient {
   constructor(private key: string, private request: typeof fetch = fetch) {
@@ -70,6 +71,22 @@ export class StripeTestClient {
       'metadata[quipu_invoice_id]': invoice.id, 'metadata[quipu_owner]': owner,
       'metadata[purpose]': 'actualizador-wp-test',
     }, `awp-quipu-test-${stable}`);
+  }
+
+  async chargeSubscription(charge: SubscriptionCharge, b: MandateBinding): Promise<Payment> {
+    if (!/^[a-zA-Z0-9_-]{1,80}$/.test(String(charge.clientId)) || !/^\d{4}-(0[1-9]|1[0-2])$/.test(charge.period) ||
+        !Number.isSafeInteger(charge.amountCents) || charge.amountCents < 1 || charge.amountCents > 99999999) {
+      throw new Error('Invalid fixed charge');
+    }
+    await this.verifyMandate(b);
+    const stable = createHash('sha256').update(`${charge.clientId}:${charge.period}`).digest('hex');
+    return this.call('payment_intents', {
+      amount: String(charge.amountCents), currency: 'eur', customer: b.customerId,
+      payment_method: b.paymentMethodId, mandate: b.mandateId,
+      'payment_method_types[0]': 'sepa_debit', confirm: 'true', off_session: 'true',
+      'metadata[billing_client_id]': String(charge.clientId), 'metadata[billing_period]': charge.period,
+      'metadata[purpose]': 'actualizador-wp-subscription-test',
+    }, `awp-subscription-test-${stable}`);
   }
 
   async payment(id: string): Promise<Payment & { metadata: Record<string, string>; customer: string }> {

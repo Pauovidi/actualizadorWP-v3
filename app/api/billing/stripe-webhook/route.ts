@@ -23,18 +23,28 @@ export async function POST(req: Request) {
     await db.query('BEGIN');
     // Serialize reconciliation for this intent and retrieve its CURRENT status,
     // not the possibly stale status of an out-of-order webhook event.
-    const local = (await db.query(`SELECT p.quipu_id,i.amount_cents,c.stripe_customer_id FROM billing_test.payments p
+    const subscription = (await db.query(`SELECT p.client_id,p.period,p.amount_cents,c.stripe_customer_id
+      FROM billing_test.subscription_payments p JOIN billing_test.clients c ON c.id=p.client_id
+      WHERE p.payment_intent_id=$1 FOR UPDATE OF p`, [event.data?.object?.id])).rows[0];
+    const invoice = subscription ? null : (await db.query(`SELECT p.quipu_id,i.amount_cents,c.stripe_customer_id FROM billing_test.payments p
       JOIN billing_test.invoices i ON i.quipu_id=p.quipu_id JOIN billing_test.clients c ON c.id=i.client_id
       WHERE p.payment_intent_id=$1 FOR UPDATE OF p`, [event.data?.object?.id])).rows[0];
+    const local = subscription || invoice;
     if (!local) { await db.query('ROLLBACK'); return NextResponse.json({ received: false, retry: true }, { status: 409 }); }
     const inserted = await db.query(`INSERT INTO billing_test.events (event_id,payment_intent_id) VALUES ($1,$2)
       ON CONFLICT DO NOTHING RETURNING event_id`, [event.id, event.data.object.id]);
     if (inserted.rowCount) {
       const current = await stripeClient().payment(event.data.object.id);
-      if (current.metadata?.quipu_invoice_id !== local.quipu_id || current.metadata?.quipu_owner !== process.env.QUIPU_OWNER_SLUG ||
-          current.metadata?.purpose !== 'actualizador-wp-test' || current.amount !== Number(local.amount_cents) ||
-          current.currency !== 'eur' || current.customer !== local.stripe_customer_id) throw new Error('Payment identity mismatch');
-      await db.query(`UPDATE billing_test.payments SET status=$2,updated_at=now() WHERE payment_intent_id=$1`, [current.id, current.status]);
+      const identityMatches = subscription
+        ? current.metadata?.billing_client_id === String(local.client_id) && current.metadata?.billing_period === local.period &&
+          current.metadata?.purpose === 'actualizador-wp-subscription-test'
+        : current.metadata?.quipu_invoice_id === local.quipu_id && current.metadata?.quipu_owner === process.env.QUIPU_OWNER_SLUG &&
+          current.metadata?.purpose === 'actualizador-wp-test';
+      if (!identityMatches || current.amount !== Number(local.amount_cents) || current.currency !== 'eur' ||
+          current.customer !== local.stripe_customer_id) throw new Error('Payment identity mismatch');
+      await db.query(subscription
+        ? `UPDATE billing_test.subscription_payments SET status=$2,updated_at=now() WHERE payment_intent_id=$1`
+        : `UPDATE billing_test.payments SET status=$2,updated_at=now() WHERE payment_intent_id=$1`, [current.id, current.status]);
     }
     await db.query('COMMIT');
     return NextResponse.json({ received: true });

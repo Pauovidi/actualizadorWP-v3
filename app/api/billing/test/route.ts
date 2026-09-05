@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server';
 import { authorizeTest, quipuClient, stripeClient, testPool } from '@/lib/billing/config';
 import { TestBillingStore } from '@/lib/billing/store';
-import { syncInvoices, prepareReports, collectPayments } from '@/lib/billing/service';
+import { syncInvoices, prepareReports, collectPayments, collectSubscriptionPayments } from '@/lib/billing/service';
 import { validPeriod } from '@/lib/billing/quipu';
 import { POST as updateDemo } from '@/app/api/update/route';
 
@@ -16,7 +16,7 @@ export async function POST(req: Request) {
   try {
     const input = await req.json();
     const period = validPeriod(input.period);
-    if (!['plan','sync','run','setup','accept-setup','status'].includes(input.action)) throw new Error('Invalid action');
+    if (!['plan','sync','run','subscription-plan','subscription-run','setup','accept-setup','status'].includes(input.action)) throw new Error('Invalid action');
     pool = testPool();
     db = await pool.connect();
     const store = new TestBillingStore(db);
@@ -28,7 +28,10 @@ export async function POST(req: Request) {
       const runs = await db.query('SELECT client_id,period,status,report_count FROM billing_test.runs WHERE period=$1', [period]);
       const payments = await db.query(`SELECT p.quipu_id,p.payment_intent_id,p.status FROM billing_test.payments p
         JOIN billing_test.invoices i ON i.quipu_id=p.quipu_id WHERE i.period=$1`, [period]);
-      return NextResponse.json({ ok: true, mode: 'test', runs: runs.rows, payments: payments.rows });
+      const subscriptionPayments = await db.query(`SELECT client_id,period,amount_cents,payment_intent_id,status
+        FROM billing_test.subscription_payments WHERE period=$1`, [period]);
+      return NextResponse.json({ ok: true, mode: 'test', runs: runs.rows, payments: payments.rows,
+        subscriptionPayments: subscriptionPayments.rows });
     }
     if (input.action === 'setup' || input.action === 'accept-setup') {
       const client = (await store.clients()).find(c => String(c.id) === String(input.clientId));
@@ -43,6 +46,11 @@ export async function POST(req: Request) {
       await db.query(`UPDATE billing_test.clients SET payment_mode='stripe_sepa',payment_method_id=$2,
         mandate_id=$3,setup_intent_id=$4 WHERE id=$1`, [client.id, mandate.paymentMethodId, mandate.mandateId, input.setupIntentId]);
       return NextResponse.json({ ok: true, mode: 'test', mandateAccepted: true });
+    }
+    if (input.action === 'subscription-plan' || input.action === 'subscription-run') {
+      const payments = await collectSubscriptionPayments(store, stripeClient(), period, input.action === 'subscription-run');
+      return NextResponse.json({ ok: true, mode: 'test', payments, invoiceSource: 'quipu-independent',
+        wordpress: 'unchanged', email: 'unchanged', productionChanged: false });
     }
     const quipu = quipuClient();
     const imported = await syncInvoices(store, quipu, period, input.action !== 'plan');

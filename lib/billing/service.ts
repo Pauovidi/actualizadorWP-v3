@@ -7,7 +7,12 @@ export type Client = {
   id: string; quipu_contact_id: string; billing_email: string; payment_mode: 'manual' | 'stripe_sepa';
   stripe_customer_id?: string; payment_method_id?: string; mandate_id?: string;
   billing_frequency: 'monthly' | 'quarterly'; quarterly_months: number[];
+  charge_amount_cents?: number; charge_currency?: string;
   sites: Array<{ name: string; url: string }>;
+};
+export type SubscriptionStore = Pick<Store, 'clients'> & {
+  claimSubscriptionPayment(client: string, period: string, amountCents: number): Promise<boolean>;
+  saveSubscriptionPayment(client: string, period: string, id: string | null, status: string): Promise<void>;
 };
 export type StoredInvoice = QuipuInvoice & { pdf: Buffer };
 export type Store = {
@@ -126,6 +131,41 @@ export async function collectPayments(store: Store, quipu: Pick<QuipuClient, 'ge
       results.push({ clientId: client.id, status: payment.status });
     } catch {
       await store.savePayment(invoice.id, null, 'REVIEW_REQUIRED');
+      results.push({ clientId: client.id, status: 'REVIEW_REQUIRED' });
+    }
+  }
+  return results;
+}
+
+// Fixed recurring SEPA collection. Quipu is deliberately absent: it remains the
+// invoice issuer, while this schedule only collects the agreed client fee.
+export async function collectSubscriptionPayments(store: SubscriptionStore,
+  stripe: Pick<StripeTestClient, 'chargeSubscription'>, period: string, apply = false) {
+  validPeriod(period);
+  const results: Array<{ clientId: string; status: string }> = [];
+  for (const client of await store.clients()) {
+    if (client.payment_mode !== 'stripe_sepa') { results.push({ clientId: client.id, status: 'MANUAL_PAYMENT' }); continue; }
+    if (!invoiceDue(client, period)) { results.push({ clientId: client.id, status: 'NOT_DUE' }); continue; }
+    const amount = Number(client.charge_amount_cents);
+    if (!Number.isSafeInteger(amount) || amount < 1 || amount > 99999999 || (client.charge_currency || 'eur').toLowerCase() !== 'eur') {
+      results.push({ clientId: client.id, status: 'INVALID_FIXED_AMOUNT' }); continue;
+    }
+    if (!client.stripe_customer_id || !client.payment_method_id || !client.mandate_id) {
+      results.push({ clientId: client.id, status: 'NO_ACCEPTED_MANDATE' }); continue;
+    }
+    if (!apply) { results.push({ clientId: client.id, status: 'WOULD_CHARGE_FIXED_FEE' }); continue; }
+    if (!await store.claimSubscriptionPayment(client.id, period, amount)) {
+      results.push({ clientId: client.id, status: 'ALREADY_CLAIMED' }); continue;
+    }
+    try {
+      const payment = await stripe.chargeSubscription({ clientId: client.id, period, amountCents: amount }, {
+        customerId: client.stripe_customer_id, paymentMethodId: client.payment_method_id, mandateId: client.mandate_id,
+      });
+      if (payment.livemode !== false || payment.amount !== amount || payment.currency !== 'eur') throw new Error('Payment mismatch');
+      await store.saveSubscriptionPayment(client.id, period, payment.id, payment.status);
+      results.push({ clientId: client.id, status: payment.status });
+    } catch {
+      await store.saveSubscriptionPayment(client.id, period, null, 'REVIEW_REQUIRED');
       results.push({ clientId: client.id, status: 'REVIEW_REQUIRED' });
     }
   }

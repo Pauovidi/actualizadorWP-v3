@@ -4,7 +4,7 @@ const { createHmac } = require('node:crypto');
 const { cents, normalizeInvoice, QuipuClient } = require('../../.test-build/lib/billing/quipu');
 const { StripeTestClient, verifyStripeEvent } = require('../../.test-build/lib/billing/stripe');
 const { authorizeTest, testPool } = require('../../.test-build/lib/billing/config');
-const { syncInvoices, prepareReports, collectPayments } = require('../../.test-build/lib/billing/service');
+const { syncInvoices, prepareReports, collectPayments, collectSubscriptionPayments } = require('../../.test-build/lib/billing/service');
 const period = '2026-09';
 const pdf = Buffer.from('%PDF-1.4\nfixture');
 const invoice = { id: '11', contactId: '22', period, number: 'TEST-1', amountCents: 10600, paymentStatus: 'unpaid' };
@@ -15,8 +15,8 @@ const resource = { id:'11',type:'invoices',attributes:{kind:'income',stage:'fina
 const response = data => new Response(JSON.stringify(data), {headers:{'content-type':'application/json'}});
 
 function memory(clients = [structuredClone(client)]) {
-  const invoices = new Map(), runs = new Map(), payments = new Map(), outbox = new Map();
-  return { invoices, runs, payments, outbox,
+  const invoices = new Map(), runs = new Map(), payments = new Map(), subscriptionPayments = new Map(), outbox = new Map();
+  return { invoices, runs, payments, subscriptionPayments, outbox,
     async clients() { return clients; },
     async invoice(id,p) { return invoices.get(`${id}:${p}`) || null; },
     async importInvoice(id,i,pdf) { const key=`${id}:${i.period}`; if(invoices.has(key)) throw Error('conflict'); invoices.set(key,{...i,pdf}); },
@@ -25,6 +25,8 @@ function memory(clients = [structuredClone(client)]) {
     async reviewRun(id,p) {runs.set(`${id}:${p}`,'REVIEW_REQUIRED');},
     async claimPayment(id) { if(payments.has(id))return false; payments.set(id,{status:'SUBMITTING'});return true; },
     async savePayment(id,intent,status) {payments.set(id,{id:intent,status});},
+    async claimSubscriptionPayment(id,p,amount) { const key=`${id}:${p}`;if(subscriptionPayments.has(key))return false;subscriptionPayments.set(key,{amount,status:'SUBMITTING'});return true; },
+    async saveSubscriptionPayment(id,p,intent,status) { const key=`${id}:${p}`;subscriptionPayments.set(key,{...subscriptionPayments.get(key),id:intent,status}); },
   };
 }
 const quipu = { async list(){return [invoice];}, async pdf(){return pdf;}, async get(){return invoice;} };
@@ -99,6 +101,22 @@ test('manual clients never call Stripe; mandate required for opt-in',async()=>{
   assert.equal((await collectPayments(opt,quipu,stripe,'fixture',period,true))[0].status,'NO_ACCEPTED_MANDATE');assert.equal(calls,0);
 });
 const sepaClient={...client,payment_mode:'stripe_sepa',stripe_customer_id:'cus_test',payment_method_id:'pm_test',mandate_id:'mandate_test'};
+const fixedSepaClient={...sepaClient,charge_amount_cents:5300,charge_currency:'eur'};
+test('fixed SEPA schedule is independent from Quipu and keeps manual clients untouched',async()=>{
+  let calls=0;const stripe={async chargeSubscription(){calls++;return {id:'pi_fixed',status:'processing',amount:5300,currency:'eur',livemode:false};}};
+  assert.equal((await collectSubscriptionPayments(memory(),stripe,period,true))[0].status,'MANUAL_PAYMENT');
+  const store=memory([fixedSepaClient]);
+  assert.equal((await collectSubscriptionPayments(store,stripe,period,false))[0].status,'WOULD_CHARGE_FIXED_FEE');
+  assert.equal(store.subscriptionPayments.size,0);
+  await Promise.all([collectSubscriptionPayments(store,stripe,period,true),collectSubscriptionPayments(store,stripe,period,true)]);
+  assert.equal(calls,1);assert.equal(store.subscriptionPayments.get('1:'+period).status,'processing');
+});
+test('fixed SEPA schedule blocks missing amount or mandate and honours quarterly months',async()=>{
+  const stripe={async chargeSubscription(){assert.fail('must not charge');}};
+  assert.equal((await collectSubscriptionPayments(memory([sepaClient]),stripe,period,true))[0].status,'INVALID_FIXED_AMOUNT');
+  assert.equal((await collectSubscriptionPayments(memory([{...client,payment_mode:'stripe_sepa',charge_amount_cents:5300}]),stripe,period,true))[0].status,'NO_ACCEPTED_MANDATE');
+  assert.equal((await collectSubscriptionPayments(memory([{...fixedSepaClient,billing_frequency:'quarterly',quarterly_months:[1,4,7,10]}]),stripe,period,true))[0].status,'NOT_DUE');
+});
 test('re-read Quipu catches manual payment or amount changes before charging',async()=>{
   for(const patch of [{paymentStatus:'paid'},{paymentStatus:'partially_paid'},{amountCents:20000}]){
     const store=memory([sepaClient]);await syncInvoices(store,quipu,period,true);
@@ -138,6 +156,19 @@ test('Stripe uses only PaymentIntents with stable idempotency, no invoices or su
   assert.equal(posts[0][1].headers['Idempotency-Key'],posts[1][1].headers['Idempotency-Key']);
   assert.equal(posts[0][1].body.get('amount'),'10600');assert.equal(posts[0][1].body.get('off_session'),'true');
   assert.ok(posts.every(([url])=>url.endsWith('/payment_intents')));
+});
+test('fixed charge uses client and period metadata with stable idempotency',async()=>{
+  const calls=[];const api=new StripeTestClient('sk_test_fixture',async(url,init)=>{
+    calls.push([url,init]);
+    if(url.includes('/mandates/'))return response({livemode:false,status:'active',type:'multi_use',payment_method:'pm_test',customer_acceptance:{accepted_at:1}});
+    if(url.includes('/payment_methods/'))return response({livemode:false,type:'sepa_debit',customer:'cus_test'});
+    return response({livemode:false,id:'pi_test',status:'processing',amount:5300,currency:'eur'});
+  });
+  const b={customerId:'cus_test',paymentMethodId:'pm_test',mandateId:'mandate_test'};
+  await api.chargeSubscription({clientId:'1',period,amountCents:5300},b);
+  const post=calls.find(([,i])=>i.method==='POST');
+  assert.ok(post[0].endsWith('/payment_intents'));assert.equal(post[1].body.get('metadata[billing_period]'),period);
+  assert.equal(post[1].body.get('metadata[purpose]'),'actualizador-wp-subscription-test');
 });
 test('signed webhook accepts test event and rejects tampering, age, and live events',()=>{
   const now=1788516000000,t=String(now/1000),secret='fixture';

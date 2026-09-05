@@ -1,10 +1,25 @@
-# Quipu → Actualizador WP → optional Stripe: isolated test implementation
+# Actualizador WP → optional Stripe SEPA: isolated test implementation
 
 This branch is a **test implementation, not an activated production integration**.
 The existing panel, manual invoice uploads, SMTP route and production schedule are
 preserved. The only legacy execution change makes `dryRun=1` genuinely read-only.
-Quipu remains the sole issuer of invoices. Stripe uses Setup-mode Checkout and
-PaymentIntents, never Stripe Billing invoices or subscriptions.
+Quipu remains the sole issuer of invoices, but the payment schedule does not use
+or require its API. Stripe collects the fixed fee configured for each opted-in
+client. It uses Setup-mode Checkout and PaymentIntents, never Stripe Billing
+invoices or subscriptions.
+
+## Current payment model (no Quipu API)
+
+- Each client has `payment_mode`, `charge_amount_cents`, currency and a monthly or
+  quarterly schedule in the private configuration store.
+- `manual` remains the default and never calls Stripe.
+- `stripe_sepa` requires an accepted multi-use SEPA mandate. A fixed PaymentIntent
+  is then created once per client and due period with a durable local claim and a
+  stable idempotency key.
+- The payment does not inspect, import, alter or mark a Quipu invoice as paid.
+  Quipu invoice creation/delivery remains an independent administrative flow.
+- The older Quipu API proof-of-concept remains in the branch for audit history,
+  but it is not part of the selected production design.
 
 ## What works in code
 
@@ -32,7 +47,8 @@ PaymentIntents, never Stripe Billing invoices or subscriptions.
 ## Activation requirements (not performed by this change)
 
 1. Provision an isolated PostgreSQL test database with no production data. Run
-   `scripts/sql/002_billing_test.sql` there only. No startup migration is provided.
+   `scripts/sql/002_billing_test.sql` and then `scripts/sql/003_fixed_sepa_test.sql`
+   there only. No startup migration is provided.
    The environment marker is a second check, not a substitute for separation.
 2. Set the following through the operator's normal secret-management interface.
    Do not paste values into tickets, logs, source control or chat:
@@ -43,9 +59,6 @@ PaymentIntents, never Stripe Billing invoices or subscriptions.
    | `BILLING_TEST_DATABASE_URL` | Dedicated test database, never the production database |
    | `BILLING_TEST_DATABASE_DATABASE_URL` | Vercel Neon-generated equivalent accepted without copying or exposing the secret |
    | `BILLING_TEST_ADMIN_TOKEN` | Dedicated random administrative token, at least 32 characters |
-   | `QUIPU_OWNER_SLUG` | Quipu account identifier |
-   | `QUIPU_ACCOUNT_CURRENCY` | `EUR`, only after verifying the account currency |
-   | `QUIPU_CLIENT_ID`, `QUIPU_CLIENT_SECRET` | Existing Quipu API access, provided by operator |
    | `STRIPE_TEST_SECRET_KEY` | Test key; `sk_live_` is rejected |
    | `STRIPE_TEST_WEBHOOK_SECRET` | Signing secret of the test webhook endpoint |
    | `BILLING_TEST_RETURN_ORIGIN` | HTTPS origin of the isolated preview |
@@ -68,6 +81,8 @@ avoid returning PDFs, customer emails, database details or provider error bodies
 | `plan` | Read Quipu + test mappings; report proposed imports; no DB writes, PDF download, WP or email |
 | `sync` | Import eligible PDFs into private test tables only |
 | `run` | Sync, prepare grouped demo reports/outbox, then optional Stripe test collection |
+| `subscription-plan` | Show the fixed charge decision per client; no writes and no Quipu request |
+| `subscription-run` | Create due Stripe test PaymentIntents from fixed fees; no Quipu request |
 | `setup` | Requires `clientId`, unique `attemptId`; returns test Checkout URL |
 | `accept-setup` | Requires `clientId`, `setupIntentId`; verifies accepted mandate with Stripe |
 | `status` | Lists test run/payment states, without PDF or email content |
@@ -80,8 +95,9 @@ SetupIntent, mandate and customer rather than trusting the browser redirect.
 token. Subscribe to `payment_intent.processing`, `payment_intent.succeeded`,
 `payment_intent.payment_failed` and `payment_intent.canceled` in **test mode**.
 An event that arrives before its local PaymentIntent mapping returns 409 for
-provider retry. An ambiguous submission with no saved ID requires reconciliation
-using Stripe metadata (`purpose`, `quipu_owner`, `quipu_invoice_id`) before retry.
+provider retry. Fixed charges are reconciled with Stripe metadata (`purpose`,
+`billing_client_id`, `billing_period`). An ambiguous submission with no saved ID
+requires reconciliation before retry.
 Never delete a payment claim just to make a retry run.
 
 ## Verification and limitations
@@ -99,9 +115,9 @@ and is not available on the declared Node 20 runtime.
 
 ## Production cutover still required
 
-- Reconcile each customer's contact ID, due months, service, amount, currency,
-  invoice numbering and tax treatment. Create Quipu recurrence templates for day
-  5 only after checking existing issued invoices and excluding duplicate periods.
+- Reconcile each customer's due months, agreed service fee and payment choice.
+  Configure Quipu recurrence templates separately when wanted; they are not a
+  prerequisite for collection.
 - Account for annual/bimonthly or other exceptions explicitly. This implementation
   deliberately supports only the current monthly/quarterly model.
 - Validate one manual client and one SEPA test client end-to-end in the isolated
@@ -112,8 +128,8 @@ and is not available on the declared Node 20 runtime.
 - Unify the scheduled WordPress adapter with the manual handler, fix authenticated
   GET invocation, add durable run recovery/concurrency protection and a bounded
   job budget. Merely adding GET would activate previously dormant updates.
-- Schedule after Quipu emission on day 5, with controlled catch-up for late
-  invoices. Verify Europe/Madrid vs UTC and do not assume a fixed local UTC offset.
+- Schedule fixed collection on the agreed day, with controlled catch-up. Verify
+  Europe/Madrid vs UTC and do not assume a fixed local UTC offset.
 - Verify prenotification and mandate communications in Stripe before any live
   collection. Live payments require a distinct reviewed change; there is no live
   key escape hatch in this implementation.
