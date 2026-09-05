@@ -135,7 +135,7 @@ export async function POST(req: Request) {
       );
       invoice = inv.rows?.[0] || null;
       if (!invoice?.blob_url) {
-        await pool.query(
+        if (!dryRun) await pool.query(
           `INSERT INTO send_runs (billing_email, period, status, details)
            VALUES ($1,$2,'SKIPPED',$3::jsonb)
            ON CONFLICT (billing_email, period) DO UPDATE SET status = EXCLUDED.status, details = EXCLUDED.details, created_at = NOW()`,
@@ -144,6 +144,13 @@ export async function POST(req: Request) {
         results.push({ email, status: 'SKIPPED', reason: 'Missing invoice (required)' });
         continue;
       }
+    }
+
+    // A dry run is read-only: no WordPress updates, PDF downloads or DB writes.
+    if (dryRun) {
+      results.push({ email, status: 'DRY_RUN', sites: groupSites.length,
+        invoiceDue, hasInvoice: Boolean(invoice?.blob_url) });
+      continue;
     }
 
     // Update all sites
@@ -171,19 +178,6 @@ export async function POST(req: Request) {
       const pdfBuf = Buffer.from(await pdfBlob.arrayBuffer());
       pdfB64 = pdfBuf.toString('base64');
       invoiceFileName = invoice.file_name;
-    }
-
-    if (dryRun) {
-      results.push({
-        email,
-        status: 'DRY_RUN',
-        sites: groupSites.length,
-        reports: reports.length,
-        invoiceDue,
-        hasInvoice: Boolean(invoice?.blob_url),
-        errors,
-      });
-      continue;
     }
 
     // Send grouped email via /api/send

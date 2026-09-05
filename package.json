@@ -10,7 +10,8 @@
     "smoke": "node scripts/smoke.mjs",
     "postinstall": "npm run ensure-types",
     "ensure-types": "npm ls @types/react >/dev/null 2>&1 || npm i -D @types/react@18.2.66 @types/react-dom@18.2.22 @types/node@20.12.12",
-    "lint": "next lint"
+    "lint": "next lint",
+    "test": "node scripts/test.mjs"
   },
   "dependencies": {
     "@sparticuz/chromium": "123.0.1",
