@@ -155,6 +155,8 @@ test('administrative routes fail closed when disabled, unauthenticated or produc
   assert.equal(authorizeTest(req,{...env,VERCEL_ENV:'production'}),false);
   assert.equal(authorizeTest(new Request('https://example.invalid'),env),false);
   assert.throws(()=>testPool({...env,BILLING_TEST_DATABASE_URL:'postgres://a:b@host/db',DATABASE_URL:'postgres://other:password@host/db'}),/Production/);
+  const generated=testPool({...env,BILLING_TEST_DATABASE_DATABASE_URL:'postgres://a:b@test-host/test-db'});
+  assert.ok(generated);generated.end();
 });
 test('legacy cron dry-run cannot perform writes, WP calls or email, even when invoice is missing',async()=>{
   const Module=require('node:module'),original=Module._load,originalFetch=global.fetch,oldSecret=process.env.CRON_SECRET;

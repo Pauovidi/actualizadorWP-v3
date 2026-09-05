@@ -14,7 +14,10 @@ export function authorizeTest(req: Request, env = process.env) {
 
 export function testPool(env = process.env) {
   if (env.BILLING_INTEGRATION_MODE !== 'test' || env.VERCEL_ENV === 'production') throw new Error('Test integration is disabled');
-  const connectionString = env.BILLING_TEST_DATABASE_URL;
+  // Vercel's Neon integration appends DATABASE_URL to the configured prefix.
+  // Keep the shorter manual name as the primary option and accept the generated
+  // isolated-project name without copying or revealing the connection secret.
+  const connectionString = env.BILLING_TEST_DATABASE_URL || env.BILLING_TEST_DATABASE_DATABASE_URL;
   if (!connectionString) throw new Error('An isolated test database is required');
   const target = new URL(connectionString);
   // Also reject alternate URLs for the same production server/database.

@@ -41,6 +41,7 @@ PaymentIntents, never Stripe Billing invoices or subscriptions.
    | --- | --- |
    | `BILLING_INTEGRATION_MODE` | Exactly `test` |
    | `BILLING_TEST_DATABASE_URL` | Dedicated test database, never the production database |
+   | `BILLING_TEST_DATABASE_DATABASE_URL` | Vercel Neon-generated equivalent accepted without copying or exposing the secret |
    | `BILLING_TEST_ADMIN_TOKEN` | Dedicated random administrative token, at least 32 characters |
    | `QUIPU_OWNER_SLUG` | Quipu account identifier |
    | `QUIPU_ACCOUNT_CURRENCY` | `EUR`, only after verifying the account currency |
