@@ -63,8 +63,9 @@ invoices or subscriptions.
    | `STRIPE_TEST_WEBHOOK_SECRET` | Signing secret of the test webhook endpoint |
    | `BILLING_TEST_RETURN_ORIGIN` | HTTPS origin of the isolated preview |
 
-3. Insert test clients into `billing_test.clients` with explicit Quipu contact IDs,
-   an intended billing email, fictional demo sites and `enabled=true`. They start
+3. Insert test clients into `billing_test.clients` with an intended billing email,
+   fixed fee, fictional demo sites and `enabled=true`. A Quipu contact ID is optional
+   and unused by fixed collection. They start
    with `payment_mode=manual`. Only link a deliberately selected Stripe **test**
    customer. Do not import production WordPress tokens.
 4. Deploy an isolated preview. `VERCEL_ENV=production` blocks the new endpoints.

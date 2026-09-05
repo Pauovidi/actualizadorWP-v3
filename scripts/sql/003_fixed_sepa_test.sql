@@ -1,5 +1,6 @@
 -- TEST DATABASE ONLY. Additive migration for fixed recurring SEPA charges.
 BEGIN;
+ALTER TABLE billing_test.clients ALTER COLUMN quipu_contact_id DROP NOT NULL;
 ALTER TABLE billing_test.clients ADD COLUMN IF NOT EXISTS charge_amount_cents BIGINT CHECK (charge_amount_cents > 0);
 ALTER TABLE billing_test.clients ADD COLUMN IF NOT EXISTS charge_currency TEXT NOT NULL DEFAULT 'eur' CHECK (charge_currency = 'eur');
 CREATE TABLE IF NOT EXISTS billing_test.subscription_payments (

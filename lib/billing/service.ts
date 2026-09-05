@@ -4,7 +4,7 @@ import { validPeriod } from './quipu';
 import type { StripeTestClient } from './stripe';
 
 export type Client = {
-  id: string; quipu_contact_id: string; billing_email: string; payment_mode: 'manual' | 'stripe_sepa';
+  id: string; quipu_contact_id?: string; billing_email: string; payment_mode: 'manual' | 'stripe_sepa';
   stripe_customer_id?: string; payment_method_id?: string; mandate_id?: string;
   billing_frequency: 'monthly' | 'quarterly'; quarterly_months: number[];
   charge_amount_cents?: number; charge_currency?: string;
