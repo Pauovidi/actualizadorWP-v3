@@ -306,6 +306,33 @@
   opacity: 0.6;
 }
 
+.emailNoteField {
+  display: grid;
+  gap: 8px;
+}
+
+.emailNoteLabel {
+  font-weight: 700;
+}
+
+.emailNoteInput {
+  width: 100%;
+  min-height: 112px;
+  resize: vertical;
+  border: 1px solid rgba(148, 163, 184, 0.35);
+  border-radius: 12px;
+  padding: 12px 14px;
+  background: rgba(15, 23, 42, 0.35);
+  color: inherit;
+  font: inherit;
+  line-height: 1.5;
+}
+
+.emailNoteInput:focus {
+  outline: 2px solid rgba(59, 130, 246, 0.25);
+  border-color: #3b82f6;
+}
+
 @media (max-width: 960px) {
   .topbar {
     flex-direction: column;

@@ -21,6 +21,7 @@ type SingleSendBody = {
   reportFileName: string;
   invoice?: { fileName: string; base64: string } | null;
   subject: string;
+  message?: string | null;
   idempotencyKey?: string | null;
   correlationId?: string | null;
 };
@@ -37,6 +38,7 @@ type GroupSendBody = {
   }>;
   invoice?: { fileName: string; base64: string } | null;
   subject: string;
+  message?: string | null;
   errors?: Array<{ site: { name: string; url: string }; error: string }>;
   idempotencyKey?: string | null;
   correlationId?: string | null;
@@ -131,6 +133,14 @@ function escapeHtml(value: unknown) {
     .replace(/>/g, '&gt;')
     .replace(/"/g, '&quot;')
     .replace(/'/g, '&#39;');
+}
+
+function additionalMessageHtml(value: unknown) {
+  if (typeof value !== 'string') return '';
+  const message = value.trim();
+  if (!message) return '';
+  if (message.length > 2000) throw new Error('El mensaje adicional es demasiado largo');
+  return `<div style="margin:18px 0;padding:14px 16px;border-left:4px solid #2563eb;background:#eff6ff;color:#172033;">${escapeHtml(message).replace(/\r?\n/g, '<br/>')}</div>`;
 }
 
 function getReportDeliveryMode(): ReportDeliveryMode {
@@ -450,6 +460,7 @@ function buildHtmlBody(
 ) {
   const inlineReports = reportDeliveryMode === 'inline' || reportDeliveryMode === 'both';
   const attachedReports = reportDeliveryMode === 'attach' || reportDeliveryMode === 'both';
+  const messageHtml = additionalMessageHtml(body.message);
   const reportsDescription = inlineReports
     ? 'incluimos en este email los <strong>informes de actualización</strong>'
     : 'adjuntamos los <strong>informes de actualización</strong>';
@@ -476,6 +487,7 @@ function buildHtmlBody(
         }${hasInvoice ? ' y adjuntamos la <strong>factura PDF</strong>.' : '.'}</p>
         <p><b>Sitios incluidos:</b></p>
         <ul>${siteItems}</ul>
+        ${messageHtml}
         ${
           errors
             ? `<p style="color:#b91c1c"><b>Nota:</b> hubo errores en algunos sitios y no se adjuntó su informe:</p>
@@ -503,6 +515,7 @@ function buildHtmlBody(
         <li><b>Sitio:</b> ${escapeHtml(body.site.name)}</li>
         <li><b>URL:</b> ${escapeHtml(body.site.url)}</li>
       </ul>
+      ${messageHtml}
       ${attachedReports && !inlineReports ? '<p>El informe HTML va adjunto a este email.</p>' : ''}
       ${inlineReports ? buildInlineReportsHtml(reports) : ''}
       <p>Gracias,<br/>Devestial</p>

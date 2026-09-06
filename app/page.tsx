@@ -63,6 +63,7 @@ const arrayBufferToBase64 = (buffer: ArrayBuffer) => {
 export default function Page() {
   const [sites, setSites] = useState<Site[]>([]);
   const [busy, setBusy] = useState(false);
+  const [emailNote, setEmailNote] = useState('');
   const [hydrated, setHydrated] = useState(false);
   const [invoiceMap, setInvoiceMap] = useState<Record<string, { file_name: string; blob_url: string }>>({});
   const [selectedIdx, setSelectedIdx] = useState<Set<number>>(() => new Set());
@@ -320,6 +321,7 @@ export default function Page() {
           reports,
           invoice: invoicePayload,
           subject,
+          message: emailNote.trim() || undefined,
           idempotencyKey,
           errors: errors.length ? errors : undefined,
         }),
@@ -634,6 +636,19 @@ export default function Page() {
             Refrescar estado
           </button>
         </div>
+
+        <label className={styles.emailNoteField}>
+          <span className={styles.emailNoteLabel}>Mensaje adicional para estos envíos</span>
+          <textarea
+            className={styles.emailNoteInput}
+            value={emailNote}
+            onChange={(event) => setEmailNote(event.target.value)}
+            placeholder="Este texto se incluirá en el cuerpo del correo, antes de los informes."
+            rows={5}
+            maxLength={2000}
+            disabled={busy}
+          />
+        </label>
 
         {groupedEmails.length === 0 ? (
           <p className={styles.muted}>No hay emails todavía. Añade webs en el listado de abajo.</p>
