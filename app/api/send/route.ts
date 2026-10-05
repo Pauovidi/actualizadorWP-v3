@@ -12,6 +12,7 @@ import {
   normalizeRecipients,
 } from '@/lib/email';
 import { buildInlineReportsHtml, sanitizeReportHtml } from '@/lib/emailInlineReport';
+import { buildInvoiceOnlyHtml } from '@/lib/emailInvoiceOnly';
 
 export const runtime = 'nodejs';
 
@@ -458,6 +459,13 @@ function buildHtmlBody(
   reportDeliveryMode: ReportDeliveryMode,
   reports: EmailReport[]
 ) {
+  if (hasInvoice && reports.length === 0) {
+    return buildInvoiceOnlyHtml(
+      isGroup(body) ? body.sites.map((site) => site.name) : [body.site.name],
+      isGroup(body) ? body.period : undefined,
+      body.message,
+    );
+  }
   const inlineReports = reportDeliveryMode === 'inline' || reportDeliveryMode === 'both';
   const attachedReports = reportDeliveryMode === 'attach' || reportDeliveryMode === 'both';
   const messageHtml = additionalMessageHtml(body.message);

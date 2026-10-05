@@ -1,0 +1,18 @@
+const fs = require('node:fs');
+const vm = require('node:vm');
+const assert = require('node:assert/strict');
+const ts = require('typescript');
+const code = ts.transpileModule(fs.readFileSync('lib/emailInvoiceOnly.ts', 'utf8'), { compilerOptions: { module: ts.ModuleKind.CommonJS }}).outputText;
+const context = { exports: {} };
+vm.runInNewContext(code, context);
+const render = context.exports.buildInvoiceOnlyHtml;
+const html = render(['Kahiko'], '2026-10', 'Adjunto la factura de octubre.');
+assert.match(html, /factura PDF/);
+assert.match(html, /Kahiko/);
+assert.doesNotMatch(html, /informe|actualizaci[oó]n|WordPress/i);
+const escaped = render(['<script>'], '<img>', 'Hola\n<script>alert(1)</script>');
+assert.doesNotMatch(escaped, /<script>|<img>/);
+assert.match(escaped, /Hola<br\/>&lt;script&gt;/);
+assert.throws(() => render([], undefined, 'x'.repeat(2001)));
+assert.match(render([], '2026-10'), /2026-10/);
+console.log('Factura sin informe: contenido correcto, escape y límite verificados.');
